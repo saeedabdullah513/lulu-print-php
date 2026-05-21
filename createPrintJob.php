@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create Print Job — Lulu API</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────── -->
+<header class="site-header">
+  <div class="header-inner">
+    <a href="index.php" class="header-back" title="Back to menu">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <line x1="19" y1="12" x2="5" y2="12"/>
+        <polyline points="12 19 5 12 12 5"/>
+      </svg>
+    </a>
+    <div class="header-logo">
+      <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>
+        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
+      </svg>
+    </div>
+    <div>
+      <h1 class="header-title">Create Print Jobs</h1>
+      <p class="header-sub">Lulu Direct API — Upload PDF Files</p>
+    </div>
+    <div class="header-badge">
+      <span class="badge-dot"></span>API Connected
+    </div>
+  </div>
+</header>
+
+<!-- ── Main ────────────────────────────────────────────────────────── -->
+<main class="page-wrap">
+  <form id="print_job_form" novalidate>
+
+    <!-- ── Shipping Address ──────────────────────────────────────── -->
+    <div class="form-card">
+      <div class="card-head">
+        <div class="section-num">1</div>
+        <div>
+          <h2 class="card-title">Shipping Address</h2>
+          <p class="card-sub">Recipient and delivery information</p>
+        </div>
+      </div>
+
+      <div class="card-body">
+
+        <div class="fg-3">
+          <div class="fw">
+            <label class="fl" for="contact_email">Contact Email</label>
+            <input type="email" id="contact_email" name="contact_email"
+                   class="fi" placeholder="you@example.com" aria-invalid="false">
+            <span class="fe"></span>
+          </div>
+          <div class="fw">
+            <label class="fl" for="ship_name">Name <em class="req">*</em></label>
+            <input type="text" id="ship_name" name="ship_name"
+                   class="fi" placeholder="Jane Doe" required aria-invalid="false">
+            <span class="fe"></span>
+          </div>
+          <div class="fw">
+            <label class="fl" for="ship_phone">Phone Number <em class="req">*</em></label>
+            <input type="tel" id="ship_phone" name="ship_phone"
+                   class="fi" placeholder="+1 555 000 0000" required aria-invalid="false">
+            <span class="fe"></span>
+          </div>
+        </div>
+
+        <div class="fg-3">
+          <div class="fw">
+            <label class="fl" for="ship_street1">Street Address <em class="req">*</em></label>
+            <input type="text" id="ship_street1" name="ship_street1"
+                   class="fi" placeholder="123 Main Street" required aria-invalid="false" maxlength="30">
+            <span class="fe"></span>
+          </div>
+          <div class="fw">
+            <label class="fl" for="ship_street2">Street Address 2</label>
+            <input type="text" id="ship_street2" name="ship_street2"
+                   class="fi" placeholder="Apt, Suite, Floor…" maxlength="30">
+          </div>
+          <div class="fw">
+            <label class="fl" for="ship_city">City <em class="req">*</em></label>
+            <input type="text" id="ship_city" name="ship_city"
+                   class="fi" placeholder="New York" required aria-invalid="false">
+            <span class="fe"></span>
+          </div>
+        </div>
+
+        <div class="fg-3">
+          <div class="fw">
+            <label class="fl" for="ship_state">State Code <em class="req">*</em></label>
+            <input type="text" id="ship_state" name="ship_state"
+                   class="fi" placeholder="NY" required aria-invalid="false">
+            <span class="fe"></span>
+          </div>
+          <div class="fw">
+            <label class="fl" for="ship_postcode">Postcode <em class="req">*</em></label>
+            <input type="text" id="ship_postcode" name="ship_postcode"
+                   class="fi" placeholder="10001" required aria-invalid="false">
+            <span class="fe"></span>
+          </div>
+          <div class="fw">
+            <label class="fl" for="ship_country">Country Code <em class="req">*</em></label>
+            <input type="text" id="ship_country" name="ship_country"
+                   class="fi" placeholder="US" maxlength="2" required aria-invalid="false"
+                   style="text-transform:uppercase">
+            <span class="fe"></span>
+          </div>
+        </div>
+
+        <div class="fg-3">
+          <div class="fw" style="grid-column:1/2">
+            <label class="fl" for="shipping_level">Shipping Level <em class="req">*</em></label>
+            <select id="shipping_level" name="shipping_level"
+                    class="fi fi-select" required aria-invalid="false">
+              <option value="">Select Any</option>
+              <option value="MAIL">Economy Mail</option>
+              <option value="PRIORITY_MAIL">Priority Mail</option>
+              <option value="GROUND_HD">Ground Home Delivery</option>
+              <option value="GROUND_BUS">Ground Business</option>
+              <option value="GROUND">Ground</option>
+              <option value="EXPEDITED">Expedited (2-day)</option>
+              <option value="EXPRESS">Express (overnight)</option>
+            </select>
+            <span class="fe"></span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── Item Details ──────────────────────────────────────────── -->
+    <div class="form-card">
+      <div class="card-head" style="justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:14px">
+          <div class="section-num">2</div>
+          <div>
+            <h2 class="card-title">Item Details</h2>
+            <p class="card-sub">Book specifications and PDF file uploads</p>
+          </div>
+        </div>
+        <button type="button" id="add_item_btn" class="btn-add">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="3">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          Add More Item
+        </button>
+      </div>
+      <div id="line_items_container"></div>
+    </div>
+
+    <!-- ── Submit ────────────────────────────────────────────────── -->
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <button type="submit" id="submit_btn" class="btn-submit">
+        Upload &amp; Submit Print Job
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5">
+          <line x1="5" y1="12" x2="19" y2="12"/>
+          <polyline points="12 5 19 12 12 19"/>
+        </svg>
+      </button>
+      <p class="req-note"><em class="req">*</em> Required fields</p>
+    </div>
+
+  </form>
+
+  <div id="result_box" class="result-box hidden"></div>
+</main>
+
+<!-- ── Line Item Template ──────────────────────────────────────────── -->
+<template id="line_item_tpl">
+  <div class="item-block">
+
+    <div class="item-head">
+      <span class="item-title">
+        <span class="item-dot"></span>
+        Item #<span class="item-num">1</span>
+      </span>
+      <button type="button" class="btn-remove">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+        Remove Item
+      </button>
+    </div>
+
+    <div class="card-body">
+
+      <p class="spec-label">Print Specifications</p>
+
+      <div class="fg-3">
+        <div class="fw">
+          <label class="fl">Trim Size <em class="req">*</em></label>
+          <select name="trim_size" class="fi fi-select" required aria-invalid="false">
+            <option value="">Select Any</option>
+            <option value="0425X0687">Pocketbook 4.25″ × 6.875″</option>
+            <option value="0500X0800">5″ × 8″</option>
+            <option value="0550X0850">Digest 5.5″ × 8.5″</option>
+            <option value="0583X0827">A5 5.83″ × 8.27″</option>
+            <option value="0600X0600">Square 6″ × 6″</option>
+            <option value="0600X0900">US Trade 6″ × 9″</option>
+            <option value="0700X0700">Square 7″ × 7″</option>
+            <option value="0700X1000">7″ × 10″</option>
+            <option value="0750X0925">7.5″ × 9.25″</option>
+            <option value="0825X1075">8.25″ × 10.75″</option>
+            <option value="0827X1169">A4 8.27″ × 11.69″</option>
+            <option value="0850X0850">Square 8.5″ × 8.5″</option>
+            <option value="0850X1100">US Letter 8.5″ × 11″</option>
+            <option value="1000X0700">10″ × 7″ Landscape</option>
+            <option value="1169X0827">A4 Landscape 11.69″ × 8.27″</option>
+          </select>
+          <span class="fe"></span>
+        </div>
+        <div class="fw">
+          <label class="fl">Color Type <em class="req">*</em></label>
+          <select name="color_type" class="fi fi-select" required aria-invalid="false">
+            <option value="">Select Any</option>
+            <option value="BW">Mono</option>
+            <option value="FC">Color</option>
+          </select>
+          <span class="fe"></span>
+        </div>
+        <div class="fw">
+          <label class="fl">Print Type <em class="req">*</em></label>
+          <select name="print_type" class="fi fi-select" required aria-invalid="false">
+            <option value="">Select Any</option>
+            <option value="STD">Standard</option>
+            <option value="PRE">Premium</option>
+          </select>
+          <span class="fe"></span>
+        </div>
+      </div>
+
+      <div class="fg-3">
+        <div class="fw">
+          <label class="fl">Bind Type <em class="req">*</em></label>
+          <select name="bind_type" class="fi fi-select" required aria-invalid="false">
+            <option value="">Select Any</option>
+            <option value="PB">Perfect Bound</option>
+            <option value="CO">Coil</option>
+            <option value="SD">Saddle Stitch</option>
+            <option value="CS">Case Wrap</option>
+            <option value="LW">Linen Wrap</option>
+            <option value="WO">Wire-O</option>
+          </select>
+          <span class="fe"></span>
+        </div>
+        <div class="fw">
+          <label class="fl">Paper Type <em class="req">*</em></label>
+          <select name="paper_type" class="fi fi-select" required aria-invalid="false">
+            <option value="">Select Any</option>
+            <option value="060UW">60# Uncoated White</option>
+            <option value="060CW">60# Coated White</option>
+            <option value="080UW">80# Uncoated White</option>
+            <option value="080CW">80# Coated White</option>
+            <option value="100CW">100# Coated White</option>
+          </select>
+          <span class="fe"></span>
+        </div>
+        <div class="fw">
+          <label class="fl">Finish Type <em class="req">*</em></label>
+          <select name="finish_type" class="fi fi-select" required aria-invalid="false">
+            <option value="">Select Any</option>
+            <option value="G">Gloss</option>
+            <option value="M">Matte</option>
+            <option value="U">Unlaminated</option>
+          </select>
+          <span class="fe"></span>
+        </div>
+      </div>
+
+      <div class="fg-3">
+        <div class="fw">
+          <label class="fl">Linen Type</label>
+          <select name="linen_type" class="fi fi-select">
+            <option value="X">N/A</option>
+            <option value="N">Navy</option>
+            <option value="B">Black</option>
+            <option value="T">Tan</option>
+            <option value="U">Burgundy</option>
+            <option value="G">Green</option>
+            <option value="Y">Gray</option>
+            <option value="P">Interior Cover Print</option>
+          </select>
+        </div>
+        <div class="fw">
+          <label class="fl">Foil Type</label>
+          <select name="foil_type" class="fi fi-select">
+            <option value="X">N/A</option>
+            <option value="G">Gold</option>
+            <option value="B">Black</option>
+            <option value="W">White</option>
+          </select>
+        </div>
+        <div class="fw">
+          <label class="fl">Quantity <em class="req">*</em></label>
+          <input type="number" name="quantity" value="1" min="1" max="10000"
+                 class="fi" required aria-invalid="false">
+          <span class="fe"></span>
+        </div>
+      </div>
+
+      <p class="spec-label" style="margin-top:4px">Book Info &amp; PDF Files</p>
+
+      <div class="fg-3">
+        <div class="fw">
+          <label class="fl">Title <em class="req">*</em></label>
+          <input type="text" name="title" class="fi" placeholder="My Book Title"
+                 required aria-invalid="false">
+          <span class="fe"></span>
+        </div>
+
+        <div class="fw">
+          <div class="label-row">
+            <label class="fl">Cover (PDF) <em class="req">*</em></label>
+            <a href="Cover.pdf" target="_blank" rel="noopener" class="btn-demo">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2.5">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              View Demo
+            </a>
+          </div>
+          <div class="file-drop" data-field="cover_pdf">
+            <input type="file" name="cover_pdf" accept=".pdf,application/pdf" required class="file-input">
+            <div class="file-drop-label">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <span class="file-drop-text">Choose PDF</span>
+            </div>
+            <div class="file-chosen hidden">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.5">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <span class="file-chosen-name"></span>
+              <button type="button" class="file-clear">×</button>
+            </div>
+          </div>
+          <span class="fe"></span>
+        </div>
+
+        <div class="fw">
+          <div class="label-row">
+            <label class="fl">Interior (PDF) <em class="req">*</em></label>
+            <a href="Interior.pdf" target="_blank" rel="noopener" class="btn-demo">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2.5">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              View Demo
+            </a>
+          </div>
+          <div class="file-drop" data-field="interior_pdf">
+            <input type="file" name="interior_pdf" accept=".pdf,application/pdf" required class="file-input">
+            <div class="file-drop-label">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <span class="file-drop-text">Choose PDF</span>
+            </div>
+            <div class="file-chosen hidden">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.5">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <span class="file-chosen-name"></span>
+              <button type="button" class="file-clear">×</button>
+            </div>
+          </div>
+          <span class="fe"></span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</template>
+
+<!-- Toast -->
+<div id="toast_region" class="toast-region"></div>
+
+<script src="create-job.js"></script>
+</body>
+</html>
