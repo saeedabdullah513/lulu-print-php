@@ -886,6 +886,44 @@ body {
 }
 .file-clear:hover { color: #ef4444; }
 
+/* ── Shipping Option Cards ──────────────────────────────────────────────── */
+#shipping_cards_list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.shipping-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 14px 18px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.12s;
+}
+.shipping-card:hover {
+  border-color: #6366f1;
+  box-shadow: 0 2px 12px rgba(99,102,241,0.12);
+  background: #fafafe;
+}
+.shipping-card:active { transform: scale(0.99); }
+.sc-left { display: flex; flex-direction: column; gap: 2px; }
+.sc-title { font-weight: 600; color: #1e293b; }
+.sc-arrival { font-size: 12px; color: #6b7280; }
+.sc-cost {
+  font-weight: 700;
+  font-size: 15px;
+  color: #059669;
+  flex-shrink: 0;
+  margin-left: 16px;
+}
+
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .fg-3 { grid-template-columns: 1fr 1fr; }

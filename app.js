@@ -37,7 +37,6 @@ const RULES = {
   ship_state:     { req: true, test: v => v.length >= 2,    msg: 'State code is required.' },
   ship_postcode:  { req: true, test: v => v.length >= 3,    msg: 'Postcode is required.' },
   ship_country:   { req: true, test: v => COUNTRY_RE.test(v), msg: '2-letter code e.g. US' },
-  shipping_level: { req: true, test: v => !!v,              msg: 'Select a shipping option.' },
   trim_size:      { req: true, test: v => !!v,              msg: 'Select trim size.' },
   color_type:     { req: true, test: v => !!v,              msg: 'Select color type.' },
   print_type:     { req: true, test: v => !!v,              msg: 'Select print type.' },
@@ -206,7 +205,7 @@ function collectData() {
     });
   });
 
-  const payload = { shipping_address, shipping_level: f('shipping_level'), line_items };
+  const payload = { shipping_address, line_items };
   const email = f('contact_email');
   if (email) payload.contact_email = email;
   return payload;
@@ -507,6 +506,109 @@ function resetForm() {
   addItem();
 }
 
+// ── Date formatter for shipping estimates ────────────────────────────────
+function fmtDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// ── Fetch real shipping options from Lulu ────────────────────────────────
+async function fetchShippingOptions(payload) {
+  const body = {
+    line_items: payload.line_items.map(item => ({
+      page_count:     item.page_count,
+      pod_package_id: item.pod_package_id,
+      quantity:       item.quantity,
+    })),
+    shipping_address: payload.shipping_address,
+  };
+  const res  = await fetch('shipping-options.php', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || `Shipping options error (${res.status})`);
+  return Array.isArray(json) ? json : [];
+}
+
+// ── Show shipping option cards — user picks one ──────────────────────────
+function showShippingSelector(options) {
+  if (!options.length) {
+    throw new Error('No shipping options available for this address and product combination.');
+  }
+
+  const cards = options.map(opt => {
+    const cost    = opt.total_cost_excl_tax || opt.cost_excl_tax;
+    const arrMin  = fmtDate(opt.estimated_arrival_min);
+    const arrMax  = fmtDate(opt.estimated_arrival_max);
+    const arrival = arrMin ? `${arrMin}–${arrMax}` : '';
+    const safeLevel = String(opt.level || '').replace(/['"<>&]/g, '');
+    const safeTitle = String(opt.title || opt.level || '').replace(/[<>&]/g, '');
+    return `<button type="button" class="shipping-card" data-level="${safeLevel}">
+      <div class="sc-left">
+        <div class="sc-title">${safeTitle}</div>
+        ${arrival ? `<div class="sc-arrival">Arrives ${arrival}</div>` : ''}
+      </div>
+      <div class="sc-cost">${cost ? fmt(cost) : 'Included'}</div>
+    </button>`;
+  }).join('');
+
+  resultBox.className = 'result-box is-success';
+  resultBox.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+      <h3 style="margin:0">Choose Shipping Method</h3>
+      <span style="font-size:12px;color:#6b7280">Select one to continue</span>
+    </div>
+    <div id="shipping_cards_list">${cards}</div>
+    <button type="button" id="back_to_form_btn" class="btn-edit" style="margin-top:14px">← Edit Form</button>`;
+  resultBox.classList.remove('hidden');
+  resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  document.getElementById('shipping_cards_list').querySelectorAll('.shipping-card').forEach(card => {
+    card.addEventListener('click', () => selectShipping(card.dataset.level));
+  });
+  document.getElementById('back_to_form_btn').addEventListener('click', () => {
+    resultBox.classList.add('hidden');
+    pendingPayload = null;
+  });
+}
+
+// ── User picks shipping → calculate cost → show preview ──────────────────
+async function selectShipping(level) {
+  if (!pendingPayload) return;
+  pendingPayload.shipping_level = level;
+
+  resultBox.className = 'result-box is-success';
+  resultBox.innerHTML = `<div class="poll-waiting">
+    <div class="spinner" style="border-top-color:#6366f1"></div>
+    <span>Calculating costs…</span>
+  </div>`;
+
+  try {
+    const costPayload = buildCostPayload(pendingPayload);
+    const res  = await fetch('cost.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(costPayload),
+    });
+    const json = await res.json();
+
+    if (res.ok) {
+      showCostPreview(json);
+    } else {
+      resultBox.className = 'result-box is-error';
+      resultBox.innerHTML = `<h3>✕ Cost Calculation Error (${res.status})</h3>
+        <pre>${JSON.stringify(json, null, 2)}</pre>`;
+    }
+  } catch (err) {
+    resultBox.className = 'result-box is-error';
+    resultBox.innerHTML = `<h3>✕ Error</h3>
+      <pre>${JSON.stringify({ error: err.message }, null, 2)}</pre>`;
+  }
+}
+
 // ── Validate interior PDF → get page_count automatically ─────────────────
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -545,7 +647,7 @@ async function fetchPageCount(interiorUrl, podPackageId) {
   throw new Error('PDF validation timed out. Please check your PDF URL and try again.');
 }
 
-// ── Submit → validate PDF → calculate costs → show preview ───────────────
+// ── Submit → validate PDFs → fetch shipping options → user picks ──────────
 form.addEventListener('submit', async e => {
   e.preventDefault();
   resultBox.classList.add('hidden');
@@ -573,27 +675,22 @@ form.addEventListener('submit', async e => {
       payload.line_items[idx].page_count = pageCount;
     }
 
-    // Step 2: Calculate costs
-    submitBtn.textContent = 'Calculating costs…';
-    const costPayload = buildCostPayload(payload);
+    // Step 2: Fetch real shipping options from Lulu
+    submitBtn.textContent = 'Loading shipping options…';
+    resultBox.className = 'result-box is-success';
+    resultBox.innerHTML = `<div class="poll-waiting">
+      <div class="spinner" style="border-top-color:#6366f1"></div>
+      <span>Loading available shipping options…</span>
+    </div>`;
+    resultBox.classList.remove('hidden');
+    resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    const res  = await fetch('cost.php', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(costPayload),
-    });
-    const json = await res.json();
+    const options = await fetchShippingOptions(payload);
+    pendingPayload = payload;
 
-    if (res.ok) {
-      pendingPayload = payload;
-      showCostPreview(json);
-    } else {
-      resultBox.className = 'result-box is-error';
-      resultBox.innerHTML = `<h3>✕ Cost Calculation Error (${res.status})</h3>
-        <pre>${JSON.stringify(json, null, 2)}</pre>`;
-      resultBox.classList.remove('hidden');
-      resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    // Step 3: Show shipping cards — user picks one → selectShipping() handles the rest
+    showShippingSelector(options);
+
   } catch (err) {
     resultBox.className = 'result-box is-error';
     resultBox.innerHTML = `<h3>✕ Error</h3>

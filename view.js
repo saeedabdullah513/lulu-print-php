@@ -286,19 +286,6 @@ async function openDetail(jobId) {
       </div>`;
     }
 
-    // Cancel action (only when UNPAID)
-    if (status === 'UNPAID') {
-      html += `<div class="detail-section detail-actions">
-        <button type="button" class="btn-cancel-job" onclick="cancelJob(${jobId}, this)">
-          Cancel Job
-        </button>
-        <span style="font-size:12px;color:#6b7280">To pay, visit
-          <a href="https://developers.lulu.com/print-jobs" target="_blank" rel="noopener"
-             style="color:#0284c7;font-weight:600">developers.lulu.com/print-jobs</a>
-        </span>
-      </div>`;
-    }
-
     // Raw JSON toggle
     html += `<div class="detail-section">
       <button type="button" class="btn-raw-toggle" onclick="toggleRaw(this)">Show Raw JSON</button>
@@ -318,32 +305,6 @@ function closeDetail(e) {
   document.getElementById('detail_overlay').classList.add('hidden');
 }
 
-async function cancelJob(jobId, btn) {
-  if (!confirm(`Cancel print job #${jobId}? This cannot be undone.`)) return;
-  btn.disabled = true;
-  btn.textContent = 'Canceling…';
-  try {
-    const res  = await fetch('cancel-job.php', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ id: jobId }),
-    });
-    const json = await res.json();
-    if (res.ok) {
-      showToast(`Job #${jobId} canceled.`, 'success');
-      document.getElementById('detail_overlay').classList.add('hidden');
-      loadJobs(currentPage);
-    } else {
-      showToast('Cancel failed: ' + (json.error || res.status), 'error');
-      btn.disabled = false;
-      btn.textContent = 'Cancel Job';
-    }
-  } catch (err) {
-    showToast('Network error: ' + err.message, 'error');
-    btn.disabled = false;
-    btn.textContent = 'Cancel Job';
-  }
-}
 
 function toggleRaw(btn) {
   const pre = btn.nextElementSibling;

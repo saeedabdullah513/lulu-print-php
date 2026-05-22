@@ -114,23 +114,7 @@
           </div>
         </div>
 
-        <div class="fg-3">
-          <div class="fw" style="grid-column:1/2">
-            <label class="fl" for="shipping_level">Shipping Level <em class="req">*</em></label>
-            <select id="shipping_level" name="shipping_level"
-                    class="fi fi-select" required aria-invalid="false">
-              <option value="">Select Any</option>
-              <option value="MAIL">Economy Mail</option>
-              <option value="PRIORITY_MAIL">Priority Mail</option>
-              <option value="GROUND_HD">Ground Home Delivery</option>
-              <option value="GROUND_BUS">Ground Business</option>
-              <option value="GROUND">Ground</option>
-              <option value="EXPEDITED">Expedited (2-day)</option>
-              <option value="EXPRESS">Express (overnight)</option>
-            </select>
-            <span class="fe"></span>
-          </div>
-        </div>
+        <p class="spec-label" style="margin-top:4px;color:#6366f1">Shipping method will be auto-loaded after you submit — choose from real-time options with prices.</p>
 
       </div>
     </div>
