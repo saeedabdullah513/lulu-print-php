@@ -192,8 +192,28 @@ async function openDetail(jobId) {
     if (items.length) {
       html += `<div class="detail-section"><h4 class="detail-section-title">Line Items</h4>`;
       items.forEach((item, i) => {
-        const ls = item.status?.name || '—';
+        const ls       = item.status?.name || '—';
         const tracking = item.tracking_id || item.status?.messages?.tracking_id;
+        const itemErr  = item.status?.messages?.error;
+        const itemInfo = item.status?.messages?.info;
+
+        // Rejection details from printable_normalization
+        const pn = item.status?.messages?.printable_normalization;
+        let rejectionHtml = '';
+        if ((ls === 'REJECTED' || ls === 'ERROR') && pn) {
+          const msgs = [];
+          if (Array.isArray(pn.cover)    && pn.cover.length)    pn.cover.forEach(m    => msgs.push({ src: 'Cover',    msg: m }));
+          if (Array.isArray(pn.interior) && pn.interior.length) pn.interior.forEach(m => msgs.push({ src: 'Interior', msg: m }));
+          if (msgs.length) {
+            rejectionHtml = `<div style="margin-top:8px;padding:10px 12px;background:#fef2f2;
+              border-radius:8px;border-left:3px solid #ef4444">
+              <p style="font-size:11px;font-weight:700;color:#b91c1c;margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em">Rejection Reason</p>
+              ${msgs.map(m => `<p style="font-size:12px;color:#991b1b;margin:3px 0">
+                <strong>${m.src}:</strong> ${escHtml(m.msg)}</p>`).join('')}
+            </div>`;
+          }
+        }
+
         html += `<div class="detail-item">
           <div class="detail-item-head">
             <span class="detail-item-num">Item ${i + 1}: ${escHtml(item.title || '—')}</span>
@@ -203,7 +223,10 @@ async function openDetail(jobId) {
             <div class="dg-row"><span class="dg-label">Quantity</span><span class="dg-val">${item.quantity ?? '—'}</span></div>
             <div class="dg-row"><span class="dg-label">Package ID</span><span class="dg-val dg-mono">${escHtml(item.pod_package_id || '—')}</span></div>
             ${tracking ? `<div class="dg-row"><span class="dg-label">Tracking</span><span class="dg-val dg-mono">${escHtml(tracking)}</span></div>` : ''}
+            ${itemErr  ? `<div class="dg-row"><span class="dg-label" style="color:#b91c1c">Error</span><span class="dg-val" style="color:#b91c1c">${escHtml(itemErr)}</span></div>` : ''}
+            ${itemInfo && !itemErr ? `<div class="dg-row"><span class="dg-label" style="color:#6b7280">Info</span><span class="dg-val" style="color:#6b7280">${escHtml(itemInfo)}</span></div>` : ''}
           </div>
+          ${rejectionHtml}
         </div>`;
       });
       html += `</div>`;
@@ -227,7 +250,7 @@ async function openDetail(jobId) {
         : '';
 
       html += `<div class="detail-section">
-        <h4 class="detail-section-title">Costs${isRejected ? ' <span style="color:#b91c1c;font-size:10px;font-weight:600">(Job ${status})</span>' : ''}</h4>
+        <h4 class="detail-section-title">Costs${isRejected ? ` <span style="color:#b91c1c;font-size:10px;font-weight:600">(Job ${status})</span>` : ''}</h4>
         <div class="detail-grid">
           ${lineItems}${shipping}${tax}
           <div class="dg-row dg-total">
@@ -251,6 +274,31 @@ async function openDetail(jobId) {
       </div>`;
     }
 
+    // Estimated shipping dates
+    if (job.estimated_shipping_dates) {
+      const s = job.estimated_shipping_dates;
+      html += `<div class="detail-section">
+        <h4 class="detail-section-title">Estimated Shipping</h4>
+        <div class="detail-grid">
+          <div class="dg-row"><span class="dg-label">Dispatch</span><span class="dg-val">${fmtDate(s.dispatch_min)} – ${fmtDate(s.dispatch_max)}</span></div>
+          <div class="dg-row"><span class="dg-label">Arrival</span><span class="dg-val">${fmtDate(s.arrival_min)} – ${fmtDate(s.arrival_max)}</span></div>
+        </div>
+      </div>`;
+    }
+
+    // Cancel action (only when UNPAID)
+    if (status === 'UNPAID') {
+      html += `<div class="detail-section detail-actions">
+        <button type="button" class="btn-cancel-job" onclick="cancelJob(${jobId}, this)">
+          Cancel Job
+        </button>
+        <span style="font-size:12px;color:#6b7280">To pay, visit
+          <a href="https://developers.lulu.com/print-jobs" target="_blank" rel="noopener"
+             style="color:#0284c7;font-weight:600">developers.lulu.com/print-jobs</a>
+        </span>
+      </div>`;
+    }
+
     // Raw JSON toggle
     html += `<div class="detail-section">
       <button type="button" class="btn-raw-toggle" onclick="toggleRaw(this)">Show Raw JSON</button>
@@ -268,6 +316,33 @@ async function openDetail(jobId) {
 function closeDetail(e) {
   if (e && e.target !== document.getElementById('detail_overlay')) return;
   document.getElementById('detail_overlay').classList.add('hidden');
+}
+
+async function cancelJob(jobId, btn) {
+  if (!confirm(`Cancel print job #${jobId}? This cannot be undone.`)) return;
+  btn.disabled = true;
+  btn.textContent = 'Canceling…';
+  try {
+    const res  = await fetch('cancel-job.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ id: jobId }),
+    });
+    const json = await res.json();
+    if (res.ok) {
+      showToast(`Job #${jobId} canceled.`, 'success');
+      document.getElementById('detail_overlay').classList.add('hidden');
+      loadJobs(currentPage);
+    } else {
+      showToast('Cancel failed: ' + (json.error || res.status), 'error');
+      btn.disabled = false;
+      btn.textContent = 'Cancel Job';
+    }
+  } catch (err) {
+    showToast('Network error: ' + err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Cancel Job';
+  }
 }
 
 function toggleRaw(btn) {

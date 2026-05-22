@@ -9,16 +9,17 @@ const resultBox   = document.getElementById('result_box');
 const toastRegion = document.getElementById('toast_region');
 const SUBMIT_HTML = submitBtn.innerHTML;
 
-let itemCount   = 0;
-let pollTimer   = null;
-let pollJobId   = null;
-let pollAttempt = 0;
-const POLL_MAX  = 24; // max ~2 minutes (24 × 5s)
+let itemCount      = 0;
+let pollTimer      = null;
+let pollJobId      = null;
+let pollAttempt    = 0;
+let pendingPayload = null; // stored after cost preview, used on confirm
+const POLL_MAX     = 24;   // 24 × 5s = ~2 minutes
 
-// ── Demo PDF URLs ─────────────────────────────────────────────────────────
+// ── Demo PDF URLs (official Lulu test files from API spec) ─────────────────
 const DEMO_URLS = {
-  cover_url:    'https://www.africau.edu/images/default/sample.pdf',
-  interior_url: 'https://www.africau.edu/images/default/sample.pdf',
+  cover_url:    'https://www.dropbox.com/sh/p3zh22vzsaegiri/AADP367j0bTWlt8fCu-_tm2ia/161025/139056_cover.pdf?dl=1',
+  interior_url: 'https://www.dropbox.com/sh/p3zh22vzsaegiri/AACOUn3LFKsITDzylh13bQpsa/161025/thesis2.pdf?dl=1',
 };
 
 // ── Validation rules ──────────────────────────────────────────────────────
@@ -110,13 +111,26 @@ function validateAll() {
   return valid;
 }
 
-// ── pod_package_id (new dotted format) ───────────────────────────────────
+// ── Normalize Dropbox/Drive URLs ─────────────────────────────────────────
+function normalizePdfUrl(url) {
+  if (!url) return url;
+  if (url.includes('dropbox.com')) {
+    // Remove any existing dl param then add dl=1
+    url = url.replace(/([?&])dl=\d/g, '$1').replace(/[?&]$/, '');
+    url += (url.includes('?') ? '&' : '?') + 'dl=1';
+    // Remove raw=0 if present, add raw=1 for direct binary download
+    url = url.replace(/([?&])raw=0/g, '$1').replace(/[?&]$/, '');
+  }
+  return url;
+}
+
+// ── pod_package_id (dotted format) ───────────────────────────────────────
 function buildPodPackageId(item) {
   const g = n => item.querySelector(`[name="${n}"]`)?.value || '';
-  const trim  = g('trim_size'),  color = g('color_type'), print = g('print_type'),
-        bind  = g('bind_type'),  paper = g('paper_type'), finish = g('finish_type');
-  const linen = g('linen_type') || 'X';
-  const foil  = g('foil_type')  || 'X';
+  const trim   = g('trim_size'),  color  = g('color_type'), print = g('print_type'),
+        bind   = g('bind_type'),  paper  = g('paper_type'), finish = g('finish_type');
+  const linen  = g('linen_type') || 'X';
+  const foil   = g('foil_type')  || 'X';
   if (!trim || !color || !print || !bind || !paper || !finish) return null;
   return `${trim}.${color}.${print}.${bind}.${paper}444.${finish}${linen}${foil}`;
 }
@@ -165,7 +179,7 @@ function renumber() {
   itemCount = container.querySelectorAll('.item-block').length;
 }
 
-// ── Collect payload ───────────────────────────────────────────────────────
+// ── Collect full payload ──────────────────────────────────────────────────
 function collectData() {
   const f = name => form.querySelector(`[name="${name}"]`)?.value.trim() || '';
 
@@ -187,8 +201,8 @@ function collectData() {
       title:          item.querySelector('[name="title"]')?.value.trim() || '',
       quantity:       parseInt(item.querySelector('[name="quantity"]')?.value || '1', 10),
       pod_package_id: buildPodPackageId(item),
-      cover:          { source_url: item.querySelector('[name="cover_url"]')?.value.trim() || '' },
-      interior:       { source_url: item.querySelector('[name="interior_url"]')?.value.trim() || '' },
+      cover:          { source_url: normalizePdfUrl(item.querySelector('[name="cover_url"]')?.value.trim()    || '') },
+      interior:       { source_url: normalizePdfUrl(item.querySelector('[name="interior_url"]')?.value.trim() || '') },
     });
   });
 
@@ -198,9 +212,67 @@ function collectData() {
   return payload;
 }
 
-// ── Cost display helper ───────────────────────────────────────────────────
+// ── Build cost calculation payload ────────────────────────────────────────
+function buildCostPayload(payload) {
+  return {
+    line_items: payload.line_items.map(item => ({
+      page_count:     item.page_count,
+      pod_package_id: item.pod_package_id,
+      quantity:       item.quantity,
+    })),
+    shipping_address: payload.shipping_address,
+    shipping_option:  payload.shipping_level, // cost API uses shipping_option
+  };
+}
+
+// ── Money formatter ───────────────────────────────────────────────────────
 function fmt(v) { return '$' + parseFloat(v || 0).toFixed(2); }
 
+// ── Render cost preview (pre-calculation response) ────────────────────────
+function renderCostPreview(costs) {
+  const items = (costs.line_item_costs || []).map((li, i) => {
+    const discountHtml = (li.discounts || []).map(d =>
+      `<div class="dg-row" style="color:#059669;font-size:12px">
+        <span class="dg-label">Discount</span>
+        <span class="dg-val">−${fmt(d.amount)} <span style="font-weight:400;color:#6b7280">(${d.description})</span></span>
+      </div>`
+    ).join('');
+    return `<div class="dg-row">
+      <span class="dg-label">Item ${i + 1} × ${li.quantity}</span>
+      <span class="dg-val">${fmt(li.total_cost_excl_tax)}</span>
+    </div>${discountHtml}`;
+  }).join('');
+
+  const shipping = costs.shipping_cost
+    ? `<div class="dg-row"><span class="dg-label">Shipping</span><span class="dg-val">${fmt(costs.shipping_cost.total_cost_excl_tax)}</span></div>`
+    : '';
+
+  const fees = (costs.fees || []).map(fee =>
+    `<div class="dg-row"><span class="dg-label">${fee.fee_type.replace(/_/g,' ')}</span><span class="dg-val">${fmt(fee.total_cost_excl_tax)}</span></div>`
+  ).join('');
+
+  const tax = parseFloat(costs.total_tax || 0) > 0
+    ? `<div class="dg-row"><span class="dg-label">Tax</span><span class="dg-val">${fmt(costs.total_tax)}</span></div>`
+    : '';
+
+  const discount = parseFloat(costs.total_discount_amount || 0) > 0
+    ? `<div class="dg-row" style="color:#059669"><span class="dg-label">Total Discount</span><span class="dg-val">−${fmt(costs.total_discount_amount)}</span></div>`
+    : '';
+
+  return `<div class="costs-panel">
+    <p class="costs-title">Estimated Cost Breakdown</p>
+    <div class="dg-grid">
+      ${items}${shipping}${fees}${discount}${tax}
+      <div class="dg-row dg-total">
+        <span class="dg-label">Total</span>
+        <span class="dg-val">${fmt(costs.total_cost_incl_tax)}</span>
+      </div>
+    </div>
+    <p class="costs-note">Review your order below. Click <strong>Confirm &amp; Place Order</strong> to submit.</p>
+  </div>`;
+}
+
+// ── Render post-creation cost breakdown ───────────────────────────────────
 function renderCosts(costs, status) {
   if (!costs) return '';
   const isRejected = status === 'REJECTED' || status === 'ERROR';
@@ -251,8 +323,86 @@ function statusBadge(name) {
     color:${color};border:1px solid ${color}44">${name}</span>`;
 }
 
-// ── Show initial success box ──────────────────────────────────────────────
-function showJobCreated(jobId) {
+// ── Show cost preview panel ───────────────────────────────────────────────
+function showCostPreview(costs) {
+  resultBox.className = 'result-box is-success';
+  resultBox.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      <h3 style="margin:0">Order Summary</h3>
+      <span style="font-size:12px;color:#6b7280">Review before placing order</span>
+    </div>
+    ${renderCostPreview(costs)}
+    <div class="cost-actions" style="margin-top:16px;padding:0">
+      <button type="button" id="confirm_btn" class="btn-confirm">
+        Confirm &amp; Place Order
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="5" y1="12" x2="19" y2="12"/>
+          <polyline points="12 5 19 12 12 19"/>
+        </svg>
+      </button>
+      <button type="button" id="edit_btn" class="btn-edit">← Edit</button>
+    </div>`;
+  resultBox.classList.remove('hidden');
+  resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  document.getElementById('confirm_btn').addEventListener('click', confirmAndPlace);
+  document.getElementById('edit_btn').addEventListener('click', () => {
+    resultBox.classList.add('hidden');
+    pendingPayload = null;
+  });
+}
+
+// ── Confirm and place order ───────────────────────────────────────────────
+async function confirmAndPlace() {
+  if (!pendingPayload) return;
+
+  const confirmBtn = document.getElementById('confirm_btn');
+  const editBtn    = document.getElementById('edit_btn');
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Placing order…';
+  if (editBtn) editBtn.disabled = true;
+
+  // Strip page_count from line_items — not accepted by job creation endpoint
+  const payload = JSON.parse(JSON.stringify(pendingPayload));
+  payload.line_items.forEach(item => delete item.page_count);
+
+  try {
+    const res  = await fetch('api.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+    const json = await res.json();
+
+    if (res.ok) {
+      const jobId   = json.id;
+      const orderId = json.order_id || null;
+      pendingPayload = null;
+      showJobCreated(jobId, orderId);
+      resetForm();
+      showToast('Print job submitted! Waiting for costs…', 'success');
+      pollJobId   = jobId;
+      pollAttempt = 0;
+      scheduleNextPoll();
+    } else {
+      resultBox.className = 'result-box is-error';
+      resultBox.innerHTML = `<h3>✕ Lulu API Error (${res.status})</h3>
+        <pre>${JSON.stringify(json, null, 2)}</pre>`;
+      resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  } catch (err) {
+    resultBox.className = 'result-box is-error';
+    resultBox.innerHTML = `<h3>✕ Network Error</h3>
+      <pre>${JSON.stringify({ error: err.message }, null, 2)}</pre>`;
+    resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+// ── Show job created success box ──────────────────────────────────────────
+function showJobCreated(jobId, orderId) {
+  const orderLine = orderId
+    ? `<span style="font-size:12px;color:#6b7280">Order ID: <strong>${orderId}</strong></span>`
+    : '';
   resultBox.className = 'result-box is-success';
   resultBox.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
@@ -262,8 +412,9 @@ function showJobCreated(jobId) {
         View All Jobs →
       </a>
     </div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       <span style="font-size:13px;color:#374151;font-weight:600">Job ID: <strong>#${jobId}</strong></span>
+      ${orderLine}
       <span id="live_status">${statusBadge('CREATED')}</span>
     </div>
     <div id="cost_poll_area" class="poll-waiting">
@@ -271,10 +422,9 @@ function showJobCreated(jobId) {
       <span>Lulu is validating your PDFs and calculating costs…</span>
     </div>
     <p style="font-size:11.5px;color:#6b7280;margin-top:10px">
-      This job is now visible in your
+      Track this job in your
       <a href="https://developers.lulu.com/print-jobs" target="_blank" rel="noopener"
          style="color:#059669;font-weight:600">Lulu Developer Portal</a>
-      where you can also track it.
     </p>`;
   resultBox.classList.remove('hidden');
   resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -302,38 +452,29 @@ async function pollStatus() {
     const job    = await res.json();
     const status = job.status?.name || 'CREATED';
 
-    // Update live status badge
     const liveEl = document.getElementById('live_status');
     if (liveEl) liveEl.innerHTML = statusBadge(status);
 
     const pollArea = document.getElementById('cost_poll_area');
-
     const hasCosts = job.costs && job.costs.total_cost_incl_tax;
 
     if (hasCosts) {
-      // Costs available — show regardless of status (UNPAID, REJECTED, etc.)
       stopPolling();
       if (pollArea) pollArea.outerHTML = renderCosts(job.costs, status);
-      if (status === 'UNPAID') showToast('Costs calculated — check the breakdown below!', 'success');
+      if (status === 'UNPAID') showToast('Costs calculated! Pay via developers.lulu.com', 'success');
 
-    } else if (TERMINAL_STATUSES.has(status) && !hasCosts) {
-      // Terminal status but no costs yet — wait one more cycle or give up
-      if (pollAttempt >= 3) {
-        stopPolling();
-        if (pollArea) {
-          const isRejected = status === 'REJECTED' || status === 'ERROR';
-          pollArea.innerHTML = `<span style="font-size:13px;color:${isRejected ? '#b91c1c' : '#6b7280'}">
-            Job status: <strong>${status}</strong>.
-            ${job.status?.message ? `<br><span style="font-size:12px">${job.status.message}</span>` : ''}
-            <br><a href="viewPrintJob.php" style="color:#6366f1;font-weight:600">View job details →</a>
-          </span>`;
-        }
-      } else {
-        scheduleNextPoll();
+    } else if (TERMINAL_STATUSES.has(status) && pollAttempt >= 3) {
+      stopPolling();
+      if (pollArea) {
+        const isRejected = status === 'REJECTED' || status === 'ERROR';
+        pollArea.innerHTML = `<span style="font-size:13px;color:${isRejected ? '#b91c1c' : '#6b7280'}">
+          Job status: <strong>${status}</strong>.
+          ${job.status?.message ? `<br><span style="font-size:12px">${job.status.message}</span>` : ''}
+          <br><a href="viewPrintJob.php" style="color:#6366f1;font-weight:600">View job details →</a>
+        </span>`;
       }
 
     } else if (pollAttempt >= POLL_MAX) {
-      // Timed out
       stopPolling();
       if (pollArea) {
         pollArea.innerHTML = `<span style="font-size:13px;color:#6b7280">
@@ -341,7 +482,6 @@ async function pollStatus() {
           <a href="viewPrintJob.php" style="color:#6366f1;font-weight:600">Check job status manually</a>
         </span>`;
       }
-
     } else {
       scheduleNextPoll();
     }
@@ -352,7 +492,7 @@ async function pollStatus() {
 }
 
 function scheduleNextPoll() {
-  pollTimer = setTimeout(pollStatus, 5000); // every 5 seconds
+  pollTimer = setTimeout(pollStatus, 5000);
 }
 
 // ── Reset form ────────────────────────────────────────────────────────────
@@ -367,44 +507,96 @@ function resetForm() {
   addItem();
 }
 
-// ── Submit ────────────────────────────────────────────────────────────────
+// ── Validate interior PDF → get page_count automatically ─────────────────
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function fetchPageCount(interiorUrl, podPackageId) {
+  // Start validation
+  const startRes  = await fetch('validate-pdf.php', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ source_url: interiorUrl, pod_package_id: podPackageId }),
+  });
+  const startData = await startRes.json();
+  if (!startRes.ok) throw new Error(startData.error || 'Could not start PDF validation.');
+
+  const validationId = startData.id;
+
+  // Already done (unlikely but handle it)
+  if (startData.page_count && ['VALIDATED','NORMALIZED'].includes(startData.status)) {
+    return startData.page_count;
+  }
+
+  // Poll up to 12 × 5s = 60 seconds
+  for (let i = 0; i < 12; i++) {
+    await sleep(5000);
+    const pollRes  = await fetch(`validate-pdf.php?id=${encodeURIComponent(validationId)}`);
+    const pollData = await pollRes.json();
+
+    if (['VALIDATED','NORMALIZED'].includes(pollData.status)) {
+      if (!pollData.page_count) throw new Error('PDF validated but page count not returned.');
+      return pollData.page_count;
+    }
+    if (pollData.status === 'ERROR') {
+      const errMsg = Array.isArray(pollData.errors) ? pollData.errors.join(', ') : (pollData.errors || 'Invalid PDF');
+      throw new Error('PDF validation failed: ' + errMsg);
+    }
+  }
+  throw new Error('PDF validation timed out. Please check your PDF URL and try again.');
+}
+
+// ── Submit → validate PDF → calculate costs → show preview ───────────────
 form.addEventListener('submit', async e => {
   e.preventDefault();
   resultBox.classList.add('hidden');
   stopPolling();
+  pendingPayload = null;
   if (!validateAll()) return;
 
-  submitBtn.disabled    = true;
-  submitBtn.textContent = 'Submitting…';
+  submitBtn.disabled = true;
 
   try {
-    const res  = await fetch('api.php', {
+    const payload = collectData();
+    const blocks  = [...container.querySelectorAll('.item-block')];
+
+    // Step 1: Validate each interior PDF and get page_count automatically
+    for (let idx = 0; idx < blocks.length; idx++) {
+      const item        = blocks[idx];
+      const interiorUrl = normalizePdfUrl(item.querySelector('[name="interior_url"]')?.value.trim());
+      const podId       = buildPodPackageId(item);
+
+      submitBtn.textContent = blocks.length > 1
+        ? `Validating PDF ${idx + 1} of ${blocks.length}…`
+        : 'Validating PDF…';
+
+      const pageCount = await fetchPageCount(interiorUrl, podId);
+      payload.line_items[idx].page_count = pageCount;
+    }
+
+    // Step 2: Calculate costs
+    submitBtn.textContent = 'Calculating costs…';
+    const costPayload = buildCostPayload(payload);
+
+    const res  = await fetch('cost.php', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(collectData()),
+      body:    JSON.stringify(costPayload),
     });
     const json = await res.json();
 
     if (res.ok) {
-      const jobId = json.id;
-      showJobCreated(jobId);
-      resetForm();
-      showToast('Print job submitted! Waiting for costs…', 'success');
-
-      // Start polling for costs
-      pollJobId   = jobId;
-      pollAttempt = 0;
-      scheduleNextPoll();
+      pendingPayload = payload;
+      showCostPreview(json);
     } else {
       resultBox.className = 'result-box is-error';
-      resultBox.innerHTML = `<h3>✕ Lulu API Error (${res.status})</h3>
+      resultBox.innerHTML = `<h3>✕ Cost Calculation Error (${res.status})</h3>
         <pre>${JSON.stringify(json, null, 2)}</pre>`;
       resultBox.classList.remove('hidden');
       resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   } catch (err) {
     resultBox.className = 'result-box is-error';
-    resultBox.innerHTML = `<h3>✕ Network Error</h3>
+    resultBox.innerHTML = `<h3>✕ Error</h3>
       <pre>${JSON.stringify({ error: err.message }, null, 2)}</pre>`;
     resultBox.classList.remove('hidden');
     resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
