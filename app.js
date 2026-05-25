@@ -9,12 +9,11 @@ const resultBox   = document.getElementById('result_box');
 const toastRegion = document.getElementById('toast_region');
 const SUBMIT_HTML = submitBtn.innerHTML;
 
-let itemCount      = 0;
-let pollTimer      = null;
-let pollJobId      = null;
-let pollAttempt    = 0;
-let pendingPayload = null; // stored after cost preview, used on confirm
-const POLL_MAX     = 24;   // 24 × 5s = ~2 minutes
+let itemCount   = 0;
+let pollTimer   = null;
+let pollJobId   = null;
+let pollAttempt = 0;
+const POLL_MAX  = 24;   // 24 × 5s = ~2 minutes
 
 // ── Demo PDF URLs (official Lulu test files from API spec) ─────────────────
 const DEMO_URLS = {
@@ -131,6 +130,15 @@ function normalizePdfUrl(url) {
 
 // ── pod_package_id builder ────────────────────────────────────────────────
 // Lulu format (WITH dots): e.g. 0600X0900.BW.STD.PB.060UW444.GXX
+// PPI (pages-per-inch) suffix varies by paper type — from Lulu spec sheet
+const PAPER_PPI = {
+  '060UW': '444',
+  '060UC': '444',
+  '070CW': '460',   // 70# Coated White bulk = 460 ppi
+  '080CW': '444',
+  '100CW': '200',   // 100# Coated White bulk = 200 ppi
+};
+
 function buildPodPackageId(item) {
   const g = n => item.querySelector(`[name="${n}"]`)?.value || '';
   const trim   = g('trim_size'),  color  = g('color_type'), print = g('print_type'),
@@ -138,8 +146,9 @@ function buildPodPackageId(item) {
   const linen  = g('linen_type') || 'X';
   const foil   = g('foil_type')  || 'X';
   if (!trim || !color || !print || !bind || !paper || !finish) return null;
-  // Format: TRIM.COLOR.PRINT.BIND.PAPER444.FINISH+LINEN+FOIL
-  return `${trim}.${color}.${print}.${bind}.${paper}444.${finish}${linen}${foil}`;
+  const ppi = PAPER_PPI[paper] || '444';
+  // Format: TRIM.COLOR.PRINT.BIND.PAPER{PPI}.FINISH+LINEN+FOIL
+  return `${trim}.${color}.${print}.${bind}.${paper}${ppi}.${finish}${linen}${foil}`;
 }
 
 // ── Add / Remove items ────────────────────────────────────────────────────
@@ -174,6 +183,61 @@ function addItem() {
       if (demoUrl) window.open(demoUrl, '_blank', 'noopener,noreferrer');
       else showToast('No demo URL configured.', 'error');
     });
+  });
+
+  // ── Live pod_package_id preview + compatibility warnings ─────────────
+  const pkgPreview    = el.querySelector('.pkg-preview');
+  const pkgPreviewVal = el.querySelector('.pkg-preview-val');
+  const specSelects   = ['trim_size','color_type','print_type','bind_type','paper_type','finish_type','linen_type','foil_type'];
+  function updatePkgPreview() {
+    const id = buildPodPackageId(el);
+    const g  = n => el.querySelector(`[name="${n}"]`)?.value || '';
+
+    // Compatibility warnings
+    const warnings = [];
+    const color  = g('color_type');
+    const paper  = g('paper_type');
+    const bind   = g('bind_type');
+    const linen  = g('linen_type');
+    const ptype  = g('print_type');
+
+    // Case Wrap (CW) only supports 060UW, 060UC, 080CW — not 070CW or 100CW
+    if (bind === 'CW' && paper && (paper === '070CW' || paper === '100CW')) {
+      warnings.push('⚠ Case Wrap only supports 60# Uncoated or 80# Coated White paper — select 60UW, 60UC, or 80CW.');
+    }
+    // Linen Wrap requires a linen colour selection
+    if (bind === 'LW' && linen === 'X') {
+      warnings.push('⚠ Linen Wrap (LW) requires a Linen color — select Navy, Black, Tan, etc. instead of N/A.');
+    }
+    // Linen doesn't apply to non-LW bindings
+    if (bind && bind !== 'LW' && linen !== 'X') {
+      warnings.push('⚠ Linen color only applies to Linen Wrap (LW) — set Linen to N/A for other binding types.');
+    }
+    if (bind === 'WO' && linen !== 'X') {
+      warnings.push('⚠ Wire-O binding does not use Linen — set Linen to N/A.');
+    }
+
+    // Remove old warnings
+    el.querySelectorAll('.pkg-warning').forEach(w => w.remove());
+
+    if (warnings.length) {
+      const wDiv = document.createElement('div');
+      wDiv.className = 'pkg-warning';
+      wDiv.style.cssText = 'margin:6px 0;padding:8px 12px;background:#fef9c3;border:1px solid #fde047;border-radius:8px;font-size:12px;color:#854d0e;line-height:1.6';
+      wDiv.innerHTML = warnings.map(w => `<div>${w}</div>`).join('');
+      pkgPreview.insertAdjacentElement('afterend', wDiv);
+    }
+
+    if (id) {
+      pkgPreviewVal.textContent = id;
+      pkgPreview.style.display  = '';
+    } else {
+      pkgPreview.style.display = 'none';
+    }
+  }
+  specSelects.forEach(name => {
+    const sel = el.querySelector(`[name="${name}"]`);
+    if (sel) sel.addEventListener('change', updatePkgPreview);
   });
 
   container.appendChild(el);
@@ -224,68 +288,13 @@ function collectData() {
   };
 }
 
-// ── Build cost calculation payload ────────────────────────────────────────
-// pageCounts = array of integers, one per line_item
-function buildCostPayload(payload, pageCounts) {
-  return {
-    line_items: payload.line_items.map((item, i) => ({
-      pod_package_id: item.printable_normalization?.pod_package_id || '',
-      page_count:     pageCounts[i] || 0,
-      quantity:       item.quantity,
-    })),
-    shipping_address: payload.shipping_address,
-    shipping_option:  payload.shipping_level, // cost.php accepts shipping_option
-  };
+// ── HTML escape helper ────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ── Money formatter ───────────────────────────────────────────────────────
 function fmt(v) { return '$' + parseFloat(v || 0).toFixed(2); }
-
-// ── Render cost preview (pre-calculation response) ────────────────────────
-function renderCostPreview(costs) {
-  const items = (costs.line_item_costs || []).map((li, i) => {
-    const discountHtml = (li.discounts || []).map(d =>
-      `<div class="dg-row" style="color:#059669;font-size:12px">
-        <span class="dg-label">Discount</span>
-        <span class="dg-val">−${fmt(d.amount)} <span style="font-weight:400;color:#6b7280">(${d.description})</span></span>
-      </div>`
-    ).join('');
-    return `<div class="dg-row">
-      <span class="dg-label">Item ${i + 1} × ${li.quantity}</span>
-      <span class="dg-val">${fmt(li.total_cost_excl_tax)}</span>
-    </div>${discountHtml}`;
-  }).join('');
-
-  const shipping = costs.shipping_cost
-    ? `<div class="dg-row"><span class="dg-label">Shipping</span><span class="dg-val">${fmt(costs.shipping_cost.total_cost_excl_tax)}</span></div>`
-    : '';
-
-  const fees = costs.fulfillment_cost
-    ? `<div class="dg-row"><span class="dg-label">Fulfillment Fee</span><span class="dg-val">${fmt(costs.fulfillment_cost.total_cost_excl_tax)}</span></div>`
-    : (costs.fees || []).map(fee =>
-        `<div class="dg-row"><span class="dg-label">${fee.fee_type.replace(/_/g,' ')}</span><span class="dg-val">${fmt(fee.total_cost_excl_tax)}</span></div>`
-      ).join('');
-
-  const tax = parseFloat(costs.total_tax || 0) > 0
-    ? `<div class="dg-row"><span class="dg-label">Tax</span><span class="dg-val">${fmt(costs.total_tax)}</span></div>`
-    : '';
-
-  const discount = parseFloat(costs.total_discount_amount || 0) > 0
-    ? `<div class="dg-row" style="color:#059669"><span class="dg-label">Total Discount</span><span class="dg-val">−${fmt(costs.total_discount_amount)}</span></div>`
-    : '';
-
-  return `<div class="costs-panel">
-    <p class="costs-title">Estimated Cost Breakdown</p>
-    <div class="dg-grid">
-      ${items}${shipping}${fees}${discount}${tax}
-      <div class="dg-row dg-total">
-        <span class="dg-label">Total</span>
-        <span class="dg-val">${fmt(costs.total_cost_incl_tax)}</span>
-      </div>
-    </div>
-    <p class="costs-note">Review your order below. Click <strong>Confirm &amp; Place Order</strong> to submit.</p>
-  </div>`;
-}
 
 // ── Render post-creation cost breakdown ───────────────────────────────────
 function renderCosts(costs, status) {
@@ -349,79 +358,6 @@ function statusBadge(name) {
   return `<span style="display:inline-block;padding:2px 10px;border-radius:999px;
     font-size:11.5px;font-weight:700;background:${color}22;
     color:${color};border:1px solid ${color}44">${name}</span>`;
-}
-
-// ── Show cost preview panel ───────────────────────────────────────────────
-function showCostPreview(costs) {
-  resultBox.className = 'result-box is-success';
-  resultBox.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
-      <h3 style="margin:0">Order Summary</h3>
-      <span style="font-size:12px;color:#6b7280">Review before placing order</span>
-    </div>
-    ${renderCostPreview(costs)}
-    <div class="cost-actions" style="margin-top:16px;padding:0">
-      <button type="button" id="confirm_btn" class="btn-confirm">
-        Confirm &amp; Place Order
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <line x1="5" y1="12" x2="19" y2="12"/>
-          <polyline points="12 5 19 12 12 19"/>
-        </svg>
-      </button>
-      <button type="button" id="edit_btn" class="btn-edit">← Edit</button>
-    </div>`;
-  resultBox.classList.remove('hidden');
-  resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-  document.getElementById('confirm_btn').addEventListener('click', confirmAndPlace);
-  document.getElementById('edit_btn').addEventListener('click', () => {
-    resultBox.classList.add('hidden');
-    pendingPayload = null;
-  });
-}
-
-// ── Confirm and place order ───────────────────────────────────────────────
-async function confirmAndPlace() {
-  if (!pendingPayload) return;
-
-  const confirmBtn = document.getElementById('confirm_btn');
-  const editBtn    = document.getElementById('edit_btn');
-  confirmBtn.disabled = true;
-  confirmBtn.textContent = 'Placing order…';
-  if (editBtn) editBtn.disabled = true;
-
-  // pendingPayload already has printable_normalization structure + shipping_level
-  // api.php handles: strips page_count (not present), normalizes shipping_option→shipping_level (not needed)
-  try {
-    const res  = await fetch('api.php', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(pendingPayload),
-    });
-    const json = await res.json();
-
-    if (res.ok) {
-      const jobId   = json.id;
-      const orderId = json.order_id || null;
-      pendingPayload = null;
-      showJobCreated(jobId, orderId);
-      resetForm();
-      showToast('Print job submitted! Waiting for costs…', 'success');
-      pollJobId   = jobId;
-      pollAttempt = 0;
-      scheduleNextPoll();
-    } else {
-      resultBox.className = 'result-box is-error';
-      resultBox.innerHTML = `<h3>✕ Lulu API Error (${res.status})</h3>
-        <pre>${JSON.stringify(json, null, 2)}</pre>`;
-      resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  } catch (err) {
-    resultBox.className = 'result-box is-error';
-    resultBox.innerHTML = `<h3>✕ Network Error</h3>
-      <pre>${JSON.stringify({ error: err.message }, null, 2)}</pre>`;
-    resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
 }
 
 // ── Show job created success box ──────────────────────────────────────────
@@ -559,33 +495,20 @@ function resetForm() {
   addItem();
 }
 
-// ── Get page_count by downloading PDF directly (no Lulu API needed) ───────
-async function fetchPageCount(pdfUrl) {
-  const res  = await fetch('get-page-count.php', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ url: pdfUrl }),
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error || 'Could not get page count from PDF.');
-  return json.page_count;
-}
-
-// ── Submit → page count → cost preview → confirm → place order ───────────
+// ── Submit → validate → create job → poll for status & costs ─────────────
 form.addEventListener('submit', async e => {
   e.preventDefault();
   resultBox.classList.add('hidden');
   stopPolling();
-  pendingPayload = null;
   if (!validateAll()) return;
 
   submitBtn.disabled = true;
-  submitBtn.textContent = 'Calculating cost…';
+  submitBtn.textContent = 'Placing order…';
 
   resultBox.className = 'result-box is-success';
   resultBox.innerHTML = `<div class="poll-waiting">
     <div class="spinner" style="border-top-color:#6366f1"></div>
-    <span>Reading PDF page count…</span>
+    <span>Creating print job…</span>
   </div>`;
   resultBox.classList.remove('hidden');
   resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -593,42 +516,47 @@ form.addEventListener('submit', async e => {
   try {
     const payload = collectData();
 
-    // Step 1: Get page_count for each interior PDF
-    const pageCounts = [];
-    for (let i = 0; i < payload.line_items.length; i++) {
-      const interiorUrl = payload.line_items[i].printable_normalization?.interior?.source_url || '';
-      if (!interiorUrl) throw new Error(`Item ${i + 1}: Interior PDF URL is missing.`);
-      const span = document.querySelector('#result_box span');
-      if (span && payload.line_items.length > 1) {
-        span.textContent = `Reading PDF ${i + 1} of ${payload.line_items.length}…`;
-      }
-      pageCounts.push(await fetchPageCount(interiorUrl));
-    }
+    // Validate pod_package_ids & known invalid combinations before sending
+    container.querySelectorAll('.item-block').forEach((itemEl, i) => {
+      const pkgId = payload.line_items[i]?.printable_normalization?.pod_package_id;
+      if (!pkgId) throw new Error(`Item ${i + 1}: Could not build Pod Package ID — select all print specification fields.`);
+      const g = n => itemEl.querySelector(`[name="${n}"]`)?.value || '';
+      const paper = g('paper_type');
+      // Case Wrap only supports 060UW, 060UC, 080CW papers (per Lulu spec sheet)
+      if (g('bind_type') === 'CW' && (paper === '070CW' || paper === '100CW'))
+        throw new Error(`Item ${i + 1}: Case Wrap only supports 60# Uncoated or 80# Coated White paper — select 60UW, 60UC, or 80CW.`);
+      // Linen Wrap requires a linen colour
+      if (g('bind_type') === 'LW' && g('linen_type') === 'X')
+        throw new Error(`Item ${i + 1}: Linen Wrap requires a Linen color — select Navy, Black, Tan, etc.`);
+    });
 
-    // Step 2: Calculate cost
-    const span = document.querySelector('#result_box span');
-    if (span) span.textContent = 'Calculating cost breakdown…';
-
-    const costPayload = buildCostPayload(payload, pageCounts);
-    const costRes  = await fetch('cost.php', {
+    // POST directly to Lulu — Lulu calculates costs internally after job creation
+    const res  = await fetch('api.php', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(costPayload),
+      body:    JSON.stringify(payload),
     });
-    const costJson = await costRes.json();
+    const json = await res.json();
 
-    if (!costRes.ok) {
-      throw new Error('Cost error (' + costRes.status + '): ' + JSON.stringify(costJson));
+    if (res.ok) {
+      const jobId   = json.id;
+      const orderId = json.order_id || null;
+      showJobCreated(jobId, orderId);
+      resetForm();
+      showToast('Print job submitted! Lulu is calculating costs…', 'success');
+      pollJobId   = jobId;
+      pollAttempt = 0;
+      scheduleNextPoll();
+    } else {
+      resultBox.className = 'result-box is-error';
+      resultBox.innerHTML = `<h3>✕ Lulu API Error (${res.status})</h3>
+        <pre style="white-space:pre-wrap;word-break:break-word">${escHtml(JSON.stringify(json, null, 2))}</pre>`;
+      resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-
-    // Step 3: Show cost preview — user confirms before order is placed
-    pendingPayload = payload;
-    showCostPreview(costJson);
-
   } catch (err) {
     resultBox.className = 'result-box is-error';
     resultBox.innerHTML = `<h3>✕ Error</h3>
-      <pre>${JSON.stringify({ error: err.message }, null, 2)}</pre>`;
+      <pre style="white-space:pre-wrap;word-break:break-word">${escHtml(err.message)}</pre>`;
     resultBox.classList.remove('hidden');
     resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } finally {

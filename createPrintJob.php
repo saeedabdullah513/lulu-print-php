@@ -53,9 +53,9 @@
 
         <div class="fg-3">
           <div class="fw">
-            <label class="fl" for="contact_email">Contact Email</label>
+            <label class="fl" for="contact_email">Contact Email <em class="req">*</em></label>
             <input type="email" id="contact_email" name="contact_email"
-                   class="fi" placeholder="you@example.com" aria-invalid="false">
+                   class="fi" placeholder="you@example.com" required aria-invalid="false">
             <span class="fe"></span>
           </div>
           <div class="fw">
@@ -204,19 +204,20 @@
           <select name="trim_size" class="fi fi-select" required aria-invalid="false">
             <option value="">Select Any</option>
             <option value="0425X0687">Pocketbook 4.25″ × 6.875″</option>
-            <option value="0500X0800">5″ × 8″</option>
+            <option value="0500X0800">Novella 5″ × 8″</option>
             <option value="0550X0850">Digest 5.5″ × 8.5″</option>
             <option value="0583X0827">A5 5.83″ × 8.27″</option>
-            <option value="0600X0600">Square 6″ × 6″</option>
             <option value="0600X0900">US Trade 6″ × 9″</option>
-            <option value="0700X0700">Square 7″ × 7″</option>
-            <option value="0700X1000">7″ × 10″</option>
-            <option value="0750X0925">7.5″ × 9.25″</option>
-            <option value="0825X1075">8.25″ × 10.75″</option>
+            <option value="0614X0921">Royal 6.14″ × 9.21″</option>
+            <option value="0663X1025">Comic 6.63″ × 10.25″</option>
+            <option value="0700X1000">Executive 7″ × 10″</option>
+            <option value="0750X0750">Small Square 7.5″ × 7.5″</option>
+            <option value="0744X0968">Crown Quarto 7.44″ × 9.68″</option>
             <option value="0827X1169">A4 8.27″ × 11.69″</option>
             <option value="0850X0850">Square 8.5″ × 8.5″</option>
             <option value="0850X1100">US Letter 8.5″ × 11″</option>
-            <option value="1000X0700">10″ × 7″ Landscape</option>
+            <option value="0900X0700">Landscape 9″ × 7″</option>
+            <option value="1100X0850">US Letter Landscape 11″ × 8.5″</option>
             <option value="1169X0827">A4 Landscape 11.69″ × 8.27″</option>
           </select>
           <span class="fe"></span>
@@ -248,8 +249,8 @@
             <option value="">Select Any</option>
             <option value="PB">Perfect Bound</option>
             <option value="CO">Coil</option>
-            <option value="SD">Saddle Stitch</option>
-            <option value="CS">Case Wrap</option>
+            <option value="SS">Saddle Stitch</option>
+            <option value="CW">Case Wrap</option>
             <option value="LW">Linen Wrap</option>
             <option value="WO">Wire-O</option>
           </select>
@@ -260,8 +261,8 @@
           <select name="paper_type" class="fi fi-select" required aria-invalid="false">
             <option value="">Select Any</option>
             <option value="060UW">60# Uncoated White</option>
-            <option value="060CW">60# Coated White</option>
-            <option value="080UW">80# Uncoated White</option>
+            <option value="060UC">60# Uncoated Cream</option>
+            <option value="070CW">70# Coated White</option>
             <option value="080CW">80# Coated White</option>
             <option value="100CW">100# Coated White</option>
           </select>
@@ -285,11 +286,11 @@
           <select name="linen_type" class="fi fi-select">
             <option value="X">N/A</option>
             <option value="N">Navy</option>
+            <option value="G">Gray</option>
+            <option value="R">Red</option>
             <option value="B">Black</option>
             <option value="T">Tan</option>
-            <option value="U">Burgundy</option>
-            <option value="G">Green</option>
-            <option value="Y">Gray</option>
+            <option value="F">Forest</option>
             <option value="P">Interior Cover Print</option>
           </select>
         </div>
@@ -308,6 +309,12 @@
                  class="fi" required aria-invalid="false">
           <span class="fe"></span>
         </div>
+      </div>
+
+      <!-- Live pod_package_id preview -->
+      <div class="pkg-preview" style="display:none;margin:8px 0 4px;padding:6px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:12px;color:#0369a1">
+        <span style="font-weight:600">Package ID:</span>
+        <span class="pkg-preview-val" style="font-family:monospace;margin-left:4px"></span>
       </div>
 
       <p class="spec-label" style="margin-top:4px">Book Info &amp; PDF Files</p>

@@ -21,7 +21,7 @@ const PHONE_RE   = /^[\+\d\s\-().]{6,20}$/;
 const COUNTRY_RE = /^[A-Za-z]{2}$/;
 
 const RULES = {
-  contact_email:  { test: v => !v || EMAIL_RE.test(v),      msg: 'Enter a valid email address.' },
+  contact_email:  { req: true, test: v => EMAIL_RE.test(v), msg: 'Enter a valid email address.' },
   ship_name:      { req: true, test: v => v.length >= 2,    msg: 'Name is required.' },
   ship_phone:     { req: true, test: v => PHONE_RE.test(v), msg: 'Enter a valid phone number.' },
   ship_street1:   { req: true, test: v => v.length >= 3,    msg: 'Street address is required.' },
@@ -29,7 +29,7 @@ const RULES = {
   ship_state:     { req: true, test: v => v.length >= 2,    msg: 'State code is required.' },
   ship_postcode:  { req: true, test: v => v.length >= 3,    msg: 'Postcode is required.' },
   ship_country:   { req: true, test: v => COUNTRY_RE.test(v), msg: '2-letter code e.g. US' },
-  shipping_level: { req: true, test: v => !!v,              msg: 'Select a shipping option.' },
+  shipping_level: { req: true, test: v => !!v,              msg: 'Select a shipping method.' },
   trim_size:      { req: true, test: v => !!v,              msg: 'Select trim size.' },
   color_type:     { req: true, test: v => !!v,              msg: 'Select color type.' },
   print_type:     { req: true, test: v => !!v,              msg: 'Select print type.' },
@@ -118,7 +118,16 @@ function validateAll() {
   return valid;
 }
 
-// ── pod_package_id (NO dots - Lulu format) ───────────────────────────────────────
+// ── pod_package_id builder ────────────────────────────────────────────────
+// PPI (pages-per-inch) suffix varies by paper — from Lulu official spec sheet
+const PAPER_PPI = {
+  '060UW': '444',
+  '060UC': '444',
+  '070CW': '460',   // 70# Coated White bulk = 460 ppi
+  '080CW': '444',
+  '100CW': '200',   // 100# Coated White bulk = 200 ppi
+};
+
 function buildPodPackageId(item) {
   const g = n => item.querySelector(`[name="${n}"]`)?.value || '';
   const trim   = g('trim_size'),  color  = g('color_type'), print = g('print_type'),
@@ -126,7 +135,13 @@ function buildPodPackageId(item) {
   const linen  = g('linen_type') || 'X';
   const foil   = g('foil_type')  || 'X';
   if (!trim || !color || !print || !bind || !paper || !finish) return null;
-  return `${trim}.${color}.${print}.${bind}.${paper}444.${finish}${linen}${foil}`;
+  const ppi = PAPER_PPI[paper] || '444';
+  return `${trim}.${color}.${print}.${bind}.${paper}${ppi}.${finish}${linen}${foil}`;
+}
+
+// ── HTML escape helper ────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ── File drop UI ──────────────────────────────────────────────────────────
@@ -186,6 +201,41 @@ function addItem() {
 
   el.querySelectorAll('.file-drop').forEach(initFileDrop);
 
+  // ── Live pod_package_id preview + compatibility warnings ─────────────
+  const pkgPreview    = el.querySelector('.pkg-preview');
+  const pkgPreviewVal = el.querySelector('.pkg-preview-val');
+  const specSelects   = ['trim_size','color_type','print_type','bind_type','paper_type','finish_type','linen_type','foil_type'];
+  function updatePkgPreview() {
+    const id = buildPodPackageId(el);
+    const g  = n => el.querySelector(`[name="${n}"]`)?.value || '';
+    const warnings = [];
+    const bind  = g('bind_type');
+    const paper = g('paper_type');
+    const linen = g('linen_type');
+
+    if (bind === 'CW' && (paper === '070CW' || paper === '100CW'))
+      warnings.push('⚠ Case Wrap only supports 60# Uncoated or 80# Coated White — select 60UW, 60UC, or 80CW.');
+    if (bind === 'LW' && linen === 'X')
+      warnings.push('⚠ Linen Wrap (LW) requires a Linen color — select Navy, Black, Tan, etc.');
+    if (bind && bind !== 'LW' && linen !== 'X')
+      warnings.push('⚠ Linen color only applies to Linen Wrap (LW) — set Linen to N/A for other bindings.');
+
+    el.querySelectorAll('.pkg-warning').forEach(w => w.remove());
+    if (warnings.length) {
+      const wDiv = document.createElement('div');
+      wDiv.className = 'pkg-warning';
+      wDiv.style.cssText = 'margin:6px 0;padding:8px 12px;background:#fef9c3;border:1px solid #fde047;border-radius:8px;font-size:12px;color:#854d0e;line-height:1.6';
+      wDiv.innerHTML = warnings.map(w => `<div>${w}</div>`).join('');
+      pkgPreview.insertAdjacentElement('afterend', wDiv);
+    }
+    if (id) { pkgPreviewVal.textContent = id; pkgPreview.style.display = ''; }
+    else     { pkgPreview.style.display = 'none'; }
+  }
+  specSelects.forEach(name => {
+    const sel = el.querySelector(`[name="${name}"]`);
+    if (sel) sel.addEventListener('change', updatePkgPreview);
+  });
+
   container.appendChild(el);
 }
 
@@ -216,6 +266,7 @@ function collectShipping() {
     city:         f('ship_city'),
     postcode:     f('ship_postcode'),
     country_code: f('ship_country').toUpperCase(),
+    email:        f('contact_email'),   // required by Lulu API
   };
   if (f('ship_street2')) addr.street2    = f('ship_street2');
   if (f('ship_state'))   addr.state_code = f('ship_state');
@@ -241,13 +292,25 @@ async function collectLineItems() {
       uploadPdf(interiorFile),
     ]);
 
+    const pkgId = buildPodPackageId(item);
+    if (!pkgId) throw new Error(`Item ${idx + 1}: Could not build Package ID — select all print spec fields.`);
+
+    // Validate Case Wrap paper restriction before sending
+    const paper = g('paper_type');
+    if (g('bind_type') === 'CW' && (paper === '070CW' || paper === '100CW'))
+      throw new Error(`Item ${idx + 1}: Case Wrap only supports 60# Uncoated or 80# Coated White paper.`);
+    if (g('bind_type') === 'LW' && g('linen_type') === 'X')
+      throw new Error(`Item ${idx + 1}: Linen Wrap requires a Linen color — select Navy, Black, Tan, etc.`);
+
     items.push({
-      external_id:    `item-${idx + 1}`,
-      title:          g('title'),
-      quantity:       parseInt(g('quantity') || '1', 10),
-      pod_package_id: buildPodPackageId(item),
-      cover:          { source_url: coverUrl },
-      interior:       { source_url: interiorUrl },
+      external_id: `item-${idx + 1}`,
+      title:       g('title'),
+      quantity:    parseInt(g('quantity') || '1', 10),
+      printable_normalization: {
+        pod_package_id: pkgId,
+        cover:    { source_url: coverUrl },
+        interior: { source_url: interiorUrl },
+      },
     });
   }
   return items;
@@ -307,7 +370,10 @@ function statusBadge(name) {
 }
 
 // ── Show success box ──────────────────────────────────────────────────────
-function showJobCreated(jobId) {
+function showJobCreated(jobId, orderId) {
+  const orderLine = orderId
+    ? `<span style="font-size:12px;color:#6b7280">Order ID: <strong>${orderId}</strong></span>`
+    : '';
   resultBox.className = 'result-box is-success';
   resultBox.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
@@ -317,8 +383,9 @@ function showJobCreated(jobId) {
         View All Jobs →
       </a>
     </div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       <span style="font-size:13px;color:#374151;font-weight:600">Job ID: <strong>#${jobId}</strong></span>
+      ${orderLine}
       <span id="live_status">${statusBadge('CREATED')}</span>
     </div>
     <div id="cost_poll_area" class="poll-waiting">
@@ -429,9 +496,11 @@ form.addEventListener('submit', async e => {
 
     submitBtn.textContent = 'Creating print job…';
 
-    const payload = { ...shipping, line_items };
-    const email   = form.querySelector('[name="contact_email"]')?.value.trim();
-    if (email) payload.contact_email = email;
+    const payload = {
+      ...shipping,
+      contact_email: form.querySelector('[name="contact_email"]')?.value.trim() || '',
+      line_items,
+    };
 
     const res  = await fetch('api.php', {
       method:  'POST',
@@ -441,10 +510,11 @@ form.addEventListener('submit', async e => {
     const json = await res.json();
 
     if (res.ok) {
-      const jobId = json.id;
-      showJobCreated(jobId);
+      const jobId   = json.id;
+      const orderId = json.order_id || null;
+      showJobCreated(jobId, orderId);
       resetForm();
-      showToast('Print job submitted! Waiting for costs…', 'success');
+      showToast('Print job submitted! Lulu is calculating costs…', 'success');
 
       pollJobId   = jobId;
       pollAttempt = 0;
@@ -452,14 +522,14 @@ form.addEventListener('submit', async e => {
     } else {
       resultBox.className = 'result-box is-error';
       resultBox.innerHTML = `<h3>✕ Lulu API Error (${res.status})</h3>
-        <pre>${JSON.stringify(json, null, 2)}</pre>`;
+        <pre style="white-space:pre-wrap;word-break:break-word">${escHtml(JSON.stringify(json, null, 2))}</pre>`;
       resultBox.classList.remove('hidden');
       resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   } catch (err) {
     resultBox.className = 'result-box is-error';
     resultBox.innerHTML = `<h3>✕ Error</h3>
-      <pre>${JSON.stringify({ error: err.message }, null, 2)}</pre>`;
+      <pre style="white-space:pre-wrap;word-break:break-word">${escHtml(err.message)}</pre>`;
     resultBox.classList.remove('hidden');
     resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } finally {
