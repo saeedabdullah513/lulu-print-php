@@ -29,7 +29,7 @@ const COUNTRY_RE = /^[A-Za-z]{2}$/;
 const URL_RE     = /^https?:\/\/.{4,}/;
 
 const RULES = {
-  contact_email:  { test: v => !v || EMAIL_RE.test(v),      msg: 'Enter a valid email address.' },
+  contact_email:  { req: true, test: v => EMAIL_RE.test(v), msg: 'Enter a valid email address.' },
   ship_name:      { req: true, test: v => v.length >= 2,    msg: 'Name is required.' },
   ship_phone:     { req: true, test: v => PHONE_RE.test(v), msg: 'Enter a valid phone number.' },
   ship_street1:   { req: true, test: v => v.length >= 3,    msg: 'Street address is required.' },
@@ -37,6 +37,7 @@ const RULES = {
   ship_state:     { req: true, test: v => v.length >= 2,    msg: 'State code is required.' },
   ship_postcode:  { req: true, test: v => v.length >= 3,    msg: 'Postcode is required.' },
   ship_country:   { req: true, test: v => COUNTRY_RE.test(v), msg: '2-letter code e.g. US' },
+  shipping_level: { req: true, test: v => !!v,              msg: 'Select a shipping method.' },
   trim_size:      { req: true, test: v => !!v,              msg: 'Select trim size.' },
   color_type:     { req: true, test: v => !!v,              msg: 'Select color type.' },
   print_type:     { req: true, test: v => !!v,              msg: 'Select print type.' },
@@ -113,17 +114,23 @@ function validateAll() {
 // ── Normalize Dropbox/Drive URLs ─────────────────────────────────────────
 function normalizePdfUrl(url) {
   if (!url) return url;
-  if (url.includes('dropbox.com')) {
-    // Remove any existing dl param then add dl=1
-    url = url.replace(/([?&])dl=\d/g, '$1').replace(/[?&]$/, '');
+
+  if (url.includes('dropbox.com') || url.includes('dropboxusercontent.com')) {
+    // Convert CDN URLs back to www.dropbox.com — CDN URLs expire before Lulu fetches them
+    url = url.replace('https://dl.dropboxusercontent.com/', 'https://www.dropbox.com/');
+
+    // Remove any existing dl= or raw= param
+    url = url.replace(/([?&])(dl|raw)=\d/g, '$1').replace(/[?&]+$/, '');
+
+    // Add dl=1 — makes Dropbox serve the PDF directly (confirmed working with Lulu)
     url += (url.includes('?') ? '&' : '?') + 'dl=1';
-    // Remove raw=0 if present, add raw=1 for direct binary download
-    url = url.replace(/([?&])raw=0/g, '$1').replace(/[?&]$/, '');
   }
+
   return url;
 }
 
-// ── pod_package_id (dotted format) ───────────────────────────────────────
+// ── pod_package_id builder ────────────────────────────────────────────────
+// Lulu format (WITH dots): e.g. 0600X0900.BW.STD.PB.060UW444.GXX
 function buildPodPackageId(item) {
   const g = n => item.querySelector(`[name="${n}"]`)?.value || '';
   const trim   = g('trim_size'),  color  = g('color_type'), print = g('print_type'),
@@ -131,6 +138,7 @@ function buildPodPackageId(item) {
   const linen  = g('linen_type') || 'X';
   const foil   = g('foil_type')  || 'X';
   if (!trim || !color || !print || !bind || !paper || !finish) return null;
+  // Format: TRIM.COLOR.PRINT.BIND.PAPER444.FINISH+LINEN+FOIL
   return `${trim}.${color}.${print}.${bind}.${paper}444.${finish}${linen}${foil}`;
 }
 
@@ -189,6 +197,7 @@ function collectData() {
     city:         f('ship_city'),
     postcode:     f('ship_postcode'),
     country_code: f('ship_country').toUpperCase(),
+    email:        f('contact_email'),
   };
   if (f('ship_street2')) shipping_address.street2    = f('ship_street2');
   if (f('ship_state'))   shipping_address.state_code = f('ship_state');
@@ -196,31 +205,36 @@ function collectData() {
   const line_items = [];
   container.querySelectorAll('.item-block').forEach((item, idx) => {
     line_items.push({
-      external_id:    `item-${idx + 1}`,
-      title:          item.querySelector('[name="title"]')?.value.trim() || '',
-      quantity:       parseInt(item.querySelector('[name="quantity"]')?.value || '1', 10),
-      pod_package_id: buildPodPackageId(item),
-      cover:          { source_url: normalizePdfUrl(item.querySelector('[name="cover_url"]')?.value.trim()    || '') },
-      interior:       { source_url: normalizePdfUrl(item.querySelector('[name="interior_url"]')?.value.trim() || '') },
+      external_id: `item-${idx + 1}`,
+      title:       item.querySelector('[name="title"]')?.value.trim() || '',
+      quantity:    parseInt(item.querySelector('[name="quantity"]')?.value || '1', 10),
+      printable_normalization: {
+        pod_package_id: buildPodPackageId(item),
+        cover:          { source_url: normalizePdfUrl(item.querySelector('[name="cover_url"]')?.value.trim()    || '') },
+        interior:       { source_url: normalizePdfUrl(item.querySelector('[name="interior_url"]')?.value.trim() || '') },
+      },
     });
   });
 
-  const payload = { shipping_address, line_items };
-  const email = f('contact_email');
-  if (email) payload.contact_email = email;
-  return payload;
+  return {
+    contact_email:  f('contact_email'),
+    shipping_address,
+    shipping_level: f('shipping_level'),
+    line_items,
+  };
 }
 
 // ── Build cost calculation payload ────────────────────────────────────────
-function buildCostPayload(payload) {
+// pageCounts = array of integers, one per line_item
+function buildCostPayload(payload, pageCounts) {
   return {
-    line_items: payload.line_items.map(item => ({
-      page_count:     item.page_count,
-      pod_package_id: item.pod_package_id,
+    line_items: payload.line_items.map((item, i) => ({
+      pod_package_id: item.printable_normalization?.pod_package_id || '',
+      page_count:     pageCounts[i] || 0,
       quantity:       item.quantity,
     })),
     shipping_address: payload.shipping_address,
-    shipping_option:  payload.shipping_level, // cost API uses shipping_option
+    shipping_option:  payload.shipping_level, // cost.php accepts shipping_option
   };
 }
 
@@ -246,9 +260,11 @@ function renderCostPreview(costs) {
     ? `<div class="dg-row"><span class="dg-label">Shipping</span><span class="dg-val">${fmt(costs.shipping_cost.total_cost_excl_tax)}</span></div>`
     : '';
 
-  const fees = (costs.fees || []).map(fee =>
-    `<div class="dg-row"><span class="dg-label">${fee.fee_type.replace(/_/g,' ')}</span><span class="dg-val">${fmt(fee.total_cost_excl_tax)}</span></div>`
-  ).join('');
+  const fees = costs.fulfillment_cost
+    ? `<div class="dg-row"><span class="dg-label">Fulfillment Fee</span><span class="dg-val">${fmt(costs.fulfillment_cost.total_cost_excl_tax)}</span></div>`
+    : (costs.fees || []).map(fee =>
+        `<div class="dg-row"><span class="dg-label">${fee.fee_type.replace(/_/g,' ')}</span><span class="dg-val">${fmt(fee.total_cost_excl_tax)}</span></div>`
+      ).join('');
 
   const tax = parseFloat(costs.total_tax || 0) > 0
     ? `<div class="dg-row"><span class="dg-label">Tax</span><span class="dg-val">${fmt(costs.total_tax)}</span></div>`
@@ -276,6 +292,7 @@ function renderCosts(costs, status) {
   if (!costs) return '';
   const isRejected = status === 'REJECTED' || status === 'ERROR';
 
+  // Item Subtotal rows
   const items = (costs.line_item_costs || []).map((li, i) =>
     `<div class="dg-row">
       <span class="dg-label">Item ${i + 1} × ${li.quantity}</span>
@@ -283,12 +300,24 @@ function renderCosts(costs, status) {
     </div>`
   ).join('');
 
+  // Fulfillment Fee — Lulu returns it as fulfillment_cost (separate field)
+  const fees = costs.fulfillment_cost
+    ? `<div class="dg-row"><span class="dg-label">Fulfillment Fee</span><span class="dg-val">${fmt(costs.fulfillment_cost.total_cost_excl_tax)}</span></div>`
+    : (costs.fees || []).map(fee => {
+        const label = fee.fee_type
+          ? fee.fee_type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+          : 'Fee';
+        return `<div class="dg-row"><span class="dg-label">${label}</span><span class="dg-val">${fmt(fee.total_cost_excl_tax)}</span></div>`;
+      }).join('');
+
+  // Shipping & Handling
   const shipping = costs.shipping_cost
-    ? `<div class="dg-row"><span class="dg-label">Shipping</span><span class="dg-val">${fmt(costs.shipping_cost.total_cost_excl_tax)}</span></div>`
+    ? `<div class="dg-row"><span class="dg-label">Shipping &amp; Handling</span><span class="dg-val">${fmt(costs.shipping_cost.total_cost_excl_tax)}</span></div>`
     : '';
 
+  // Sales Tax
   const tax = parseFloat(costs.total_tax || 0) > 0
-    ? `<div class="dg-row"><span class="dg-label">Tax</span><span class="dg-val">${fmt(costs.total_tax)}</span></div>`
+    ? `<div class="dg-row"><span class="dg-label">Sales Tax</span><span class="dg-val">${fmt(costs.total_tax)}</span></div>`
     : '';
 
   const note = isRejected
@@ -298,9 +327,9 @@ function renderCosts(costs, status) {
   return `<div class="costs-panel${isRejected ? ' costs-panel--rejected' : ''}">
     <p class="costs-title">Cost Breakdown</p>
     <div class="dg-grid">
-      ${items}${shipping}${tax}
+      ${items}${fees}${shipping}${tax}
       <div class="dg-row dg-total">
-        <span class="dg-label">Total</span>
+        <span class="dg-label">Payment Total</span>
         <span class="dg-val">${fmt(costs.total_cost_incl_tax)}</span>
       </div>
     </div>
@@ -361,15 +390,13 @@ async function confirmAndPlace() {
   confirmBtn.textContent = 'Placing order…';
   if (editBtn) editBtn.disabled = true;
 
-  // Strip page_count from line_items — not accepted by job creation endpoint
-  const payload = JSON.parse(JSON.stringify(pendingPayload));
-  payload.line_items.forEach(item => delete item.page_count);
-
+  // pendingPayload already has printable_normalization structure + shipping_level
+  // api.php handles: strips page_count (not present), normalizes shipping_option→shipping_level (not needed)
   try {
     const res  = await fetch('api.php', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(payload),
+      body:    JSON.stringify(pendingPayload),
     });
     const json = await res.json();
 
@@ -466,11 +493,37 @@ async function pollStatus() {
       stopPolling();
       if (pollArea) {
         const isRejected = status === 'REJECTED' || status === 'ERROR';
-        pollArea.innerHTML = `<span style="font-size:13px;color:${isRejected ? '#b91c1c' : '#6b7280'}">
+
+        // Extract printable_normalization rejection reasons from each line item
+        let rejHtml = '';
+        if (isRejected && Array.isArray(job.line_items)) {
+          const reasons = [];
+          job.line_items.forEach((item, idx) => {
+            const pn = item.status?.messages?.printable_normalization;
+            if (pn) {
+              (pn.cover    || []).forEach(m => reasons.push(`Item ${idx + 1} Cover: ${m.message || m}`));
+              (pn.interior || []).forEach(m => reasons.push(`Item ${idx + 1} Interior: ${m.message || m}`));
+            }
+          });
+          if (reasons.length) {
+            rejHtml = `<div style="margin-top:10px;background:#fef2f2;border:1px solid #fca5a5;
+              border-radius:8px;padding:10px 14px;font-size:12px;color:#b91c1c;line-height:1.6">
+              <strong>Rejection reason:</strong><br>
+              ${reasons.map(r => `• ${r}`).join('<br>')}
+            </div>`;
+          } else {
+            rejHtml = `<div style="margin-top:10px;font-size:12px;color:#b91c1c">
+              Check that your PDF page size matches the selected trim size, and that both PDF URLs are publicly accessible.
+            </div>`;
+          }
+        }
+
+        pollArea.innerHTML = `<div style="font-size:13px;color:${isRejected ? '#b91c1c' : '#6b7280'}">
           Job status: <strong>${status}</strong>.
-          ${job.status?.message ? `<br><span style="font-size:12px">${job.status.message}</span>` : ''}
-          <br><a href="viewPrintJob.php" style="color:#6366f1;font-weight:600">View job details →</a>
-        </span>`;
+          ${job.status?.message ? `<span style="font-size:12px;display:block;margin-top:4px">${job.status.message}</span>` : ''}
+          ${rejHtml}
+          <a href="viewPrintJob.php" style="display:inline-block;margin-top:8px;color:#6366f1;font-weight:600;font-size:12px">View full job details →</a>
+        </div>`;
       }
 
     } else if (pollAttempt >= POLL_MAX) {
@@ -506,148 +559,19 @@ function resetForm() {
   addItem();
 }
 
-// ── Date formatter for shipping estimates ────────────────────────────────
-function fmtDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
-// ── Fetch real shipping options from Lulu ────────────────────────────────
-async function fetchShippingOptions(payload) {
-  const body = {
-    line_items: payload.line_items.map(item => ({
-      page_count:     item.page_count,
-      pod_package_id: item.pod_package_id,
-      quantity:       item.quantity,
-    })),
-    shipping_address: payload.shipping_address,
-  };
-  const res  = await fetch('shipping-options.php', {
+// ── Get page_count by downloading PDF directly (no Lulu API needed) ───────
+async function fetchPageCount(pdfUrl) {
+  const res  = await fetch('get-page-count.php', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(body),
+    body:    JSON.stringify({ url: pdfUrl }),
   });
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error || `Shipping options error (${res.status})`);
-  return Array.isArray(json) ? json : [];
+  if (!res.ok) throw new Error(json.error || 'Could not get page count from PDF.');
+  return json.page_count;
 }
 
-// ── Show shipping option cards — user picks one ──────────────────────────
-function showShippingSelector(options) {
-  if (!options.length) {
-    throw new Error('No shipping options available for this address and product combination.');
-  }
-
-  const cards = options.map(opt => {
-    const cost    = opt.total_cost_excl_tax || opt.cost_excl_tax;
-    const arrMin  = fmtDate(opt.estimated_arrival_min);
-    const arrMax  = fmtDate(opt.estimated_arrival_max);
-    const arrival = arrMin ? `${arrMin}–${arrMax}` : '';
-    const safeLevel = String(opt.level || '').replace(/['"<>&]/g, '');
-    const safeTitle = String(opt.title || opt.level || '').replace(/[<>&]/g, '');
-    return `<button type="button" class="shipping-card" data-level="${safeLevel}">
-      <div class="sc-left">
-        <div class="sc-title">${safeTitle}</div>
-        ${arrival ? `<div class="sc-arrival">Arrives ${arrival}</div>` : ''}
-      </div>
-      <div class="sc-cost">${cost ? fmt(cost) : 'Included'}</div>
-    </button>`;
-  }).join('');
-
-  resultBox.className = 'result-box is-success';
-  resultBox.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
-      <h3 style="margin:0">Choose Shipping Method</h3>
-      <span style="font-size:12px;color:#6b7280">Select one to continue</span>
-    </div>
-    <div id="shipping_cards_list">${cards}</div>
-    <button type="button" id="back_to_form_btn" class="btn-edit" style="margin-top:14px">← Edit Form</button>`;
-  resultBox.classList.remove('hidden');
-  resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-  document.getElementById('shipping_cards_list').querySelectorAll('.shipping-card').forEach(card => {
-    card.addEventListener('click', () => selectShipping(card.dataset.level));
-  });
-  document.getElementById('back_to_form_btn').addEventListener('click', () => {
-    resultBox.classList.add('hidden');
-    pendingPayload = null;
-  });
-}
-
-// ── User picks shipping → calculate cost → show preview ──────────────────
-async function selectShipping(level) {
-  if (!pendingPayload) return;
-  pendingPayload.shipping_level = level;
-
-  resultBox.className = 'result-box is-success';
-  resultBox.innerHTML = `<div class="poll-waiting">
-    <div class="spinner" style="border-top-color:#6366f1"></div>
-    <span>Calculating costs…</span>
-  </div>`;
-
-  try {
-    const costPayload = buildCostPayload(pendingPayload);
-    const res  = await fetch('cost.php', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(costPayload),
-    });
-    const json = await res.json();
-
-    if (res.ok) {
-      showCostPreview(json);
-    } else {
-      resultBox.className = 'result-box is-error';
-      resultBox.innerHTML = `<h3>✕ Cost Calculation Error (${res.status})</h3>
-        <pre>${JSON.stringify(json, null, 2)}</pre>`;
-    }
-  } catch (err) {
-    resultBox.className = 'result-box is-error';
-    resultBox.innerHTML = `<h3>✕ Error</h3>
-      <pre>${JSON.stringify({ error: err.message }, null, 2)}</pre>`;
-  }
-}
-
-// ── Validate interior PDF → get page_count automatically ─────────────────
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-async function fetchPageCount(interiorUrl, podPackageId) {
-  // Start validation
-  const startRes  = await fetch('validate-pdf.php', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ source_url: interiorUrl, pod_package_id: podPackageId }),
-  });
-  const startData = await startRes.json();
-  if (!startRes.ok) throw new Error(startData.error || 'Could not start PDF validation.');
-
-  const validationId = startData.id;
-
-  // Already done (unlikely but handle it)
-  if (startData.page_count && ['VALIDATED','NORMALIZED'].includes(startData.status)) {
-    return startData.page_count;
-  }
-
-  // Poll up to 12 × 5s = 60 seconds
-  for (let i = 0; i < 12; i++) {
-    await sleep(5000);
-    const pollRes  = await fetch(`validate-pdf.php?id=${encodeURIComponent(validationId)}`);
-    const pollData = await pollRes.json();
-
-    if (['VALIDATED','NORMALIZED'].includes(pollData.status)) {
-      if (!pollData.page_count) throw new Error('PDF validated but page count not returned.');
-      return pollData.page_count;
-    }
-    if (pollData.status === 'ERROR') {
-      const errMsg = Array.isArray(pollData.errors) ? pollData.errors.join(', ') : (pollData.errors || 'Invalid PDF');
-      throw new Error('PDF validation failed: ' + errMsg);
-    }
-  }
-  throw new Error('PDF validation timed out. Please check your PDF URL and try again.');
-}
-
-// ── Submit → validate PDFs → fetch shipping options → user picks ──────────
+// ── Submit → page count → cost preview → confirm → place order ───────────
 form.addEventListener('submit', async e => {
   e.preventDefault();
   resultBox.classList.add('hidden');
@@ -656,40 +580,50 @@ form.addEventListener('submit', async e => {
   if (!validateAll()) return;
 
   submitBtn.disabled = true;
+  submitBtn.textContent = 'Calculating cost…';
+
+  resultBox.className = 'result-box is-success';
+  resultBox.innerHTML = `<div class="poll-waiting">
+    <div class="spinner" style="border-top-color:#6366f1"></div>
+    <span>Reading PDF page count…</span>
+  </div>`;
+  resultBox.classList.remove('hidden');
+  resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   try {
     const payload = collectData();
-    const blocks  = [...container.querySelectorAll('.item-block')];
 
-    // Step 1: Validate each interior PDF and get page_count automatically
-    for (let idx = 0; idx < blocks.length; idx++) {
-      const item        = blocks[idx];
-      const interiorUrl = normalizePdfUrl(item.querySelector('[name="interior_url"]')?.value.trim());
-      const podId       = buildPodPackageId(item);
-
-      submitBtn.textContent = blocks.length > 1
-        ? `Validating PDF ${idx + 1} of ${blocks.length}…`
-        : 'Validating PDF…';
-
-      const pageCount = await fetchPageCount(interiorUrl, podId);
-      payload.line_items[idx].page_count = pageCount;
+    // Step 1: Get page_count for each interior PDF
+    const pageCounts = [];
+    for (let i = 0; i < payload.line_items.length; i++) {
+      const interiorUrl = payload.line_items[i].printable_normalization?.interior?.source_url || '';
+      if (!interiorUrl) throw new Error(`Item ${i + 1}: Interior PDF URL is missing.`);
+      const span = document.querySelector('#result_box span');
+      if (span && payload.line_items.length > 1) {
+        span.textContent = `Reading PDF ${i + 1} of ${payload.line_items.length}…`;
+      }
+      pageCounts.push(await fetchPageCount(interiorUrl));
     }
 
-    // Step 2: Fetch real shipping options from Lulu
-    submitBtn.textContent = 'Loading shipping options…';
-    resultBox.className = 'result-box is-success';
-    resultBox.innerHTML = `<div class="poll-waiting">
-      <div class="spinner" style="border-top-color:#6366f1"></div>
-      <span>Loading available shipping options…</span>
-    </div>`;
-    resultBox.classList.remove('hidden');
-    resultBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Step 2: Calculate cost
+    const span = document.querySelector('#result_box span');
+    if (span) span.textContent = 'Calculating cost breakdown…';
 
-    const options = await fetchShippingOptions(payload);
+    const costPayload = buildCostPayload(payload, pageCounts);
+    const costRes  = await fetch('cost.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(costPayload),
+    });
+    const costJson = await costRes.json();
+
+    if (!costRes.ok) {
+      throw new Error('Cost error (' + costRes.status + '): ' + JSON.stringify(costJson));
+    }
+
+    // Step 3: Show cost preview — user confirms before order is placed
     pendingPayload = payload;
-
-    // Step 3: Show shipping cards — user picks one → selectShipping() handles the rest
-    showShippingSelector(options);
+    showCostPreview(costJson);
 
   } catch (err) {
     resultBox.className = 'result-box is-error';

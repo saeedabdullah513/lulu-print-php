@@ -39,6 +39,50 @@ if (empty($tokenRes['access_token'])) {
     exit;
 }
 
+// ── Build clean payload for /print-jobs/cost-calculations/ ───────────────
+// Required: line_items[].pod_package_id, line_items[].page_count,
+//           line_items[].quantity, shipping_address, shipping_option
+// shipping_address needs 'country' key (NOT 'country_code')
+
+$shippingAddr = $input['shipping_address'] ?? [];
+// Normalise country_code → country (Lulu cost API uses 'country')
+if (!isset($shippingAddr['country']) && isset($shippingAddr['country_code'])) {
+    $shippingAddr['country'] = $shippingAddr['country_code'];
+}
+unset($shippingAddr['country_code']);
+
+// Accept shipping_option OR shipping_level from JS
+$shippingOption = $input['shipping_option'] ?? $input['shipping_level'] ?? null;
+
+if (!$shippingOption) {
+    ob_end_clean();
+    http_response_code(400);
+    echo json_encode(['error' => 'shipping_option is required.']);
+    exit;
+}
+
+$cleanLineItems = array_map(function($item) {
+    // Support both flat pod_package_id and nested printable_normalization structure
+    $podPackageId = $item['pod_package_id']
+        ?? $item['printable_normalization']['pod_package_id']
+        ?? '';
+    $li = [
+        'pod_package_id' => $podPackageId,
+        'quantity'       => (int)($item['quantity'] ?? 1),
+    ];
+    // page_count is required for cost-calculations
+    if (!empty($item['page_count'])) {
+        $li['page_count'] = (int)$item['page_count'];
+    }
+    return $li;
+}, $input['line_items'] ?? []);
+
+$payload = [
+    'line_items'       => $cleanLineItems,
+    'shipping_address' => $shippingAddr,
+    'shipping_option'  => $shippingOption,
+];
+
 // Cost calculation
 $ch = curl_init(LULU_BASE_URL . '/print-job-cost-calculations/');
 curl_setopt_array($ch, [
@@ -50,11 +94,7 @@ curl_setopt_array($ch, [
         'Content-Type: application/json',
         'Cache-Control: no-cache',
     ],
-    CURLOPT_POSTFIELDS => json_encode([
-        'line_items'       => $input['line_items'],
-        'shipping_address' => $input['shipping_address'],
-        'shipping_option'  => $input['shipping_option'],
-    ]),
+    CURLOPT_POSTFIELDS => json_encode($payload),
 ]);
 
 $response = curl_exec($ch);

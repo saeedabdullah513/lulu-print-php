@@ -23,6 +23,29 @@ function getLuluToken() {
     return $res['access_token'] ?? null;
 }
 
+// ── Normalize Dropbox URL → www.dropbox.com with dl=1 ────────────────────
+// IMPORTANT: Do NOT convert to CDN URLs — they expire before Lulu fetches them
+// Just ensure dl=1 is set on the www.dropbox.com URL
+function normalizeDropboxUrl(string $url): string {
+    if (strpos($url, 'dropbox.com') === false &&
+        strpos($url, 'dropboxusercontent.com') === false) {
+        return $url; // not Dropbox
+    }
+
+    // If it's already a CDN URL, convert back to www.dropbox.com
+    // (CDN URLs expire — Lulu gets 404 when it tries to fetch later)
+    $url = str_replace('https://dl.dropboxusercontent.com/', 'https://www.dropbox.com/', $url);
+
+    // Remove any existing dl= or raw= param
+    $url = preg_replace('/([?&])(dl|raw)=\d/', '$1', $url);
+    $url = preg_replace('/[?&]+$/', '', $url);
+
+    // Force dl=1 — makes Dropbox serve the file directly
+    $url .= (strpos($url, '?') !== false ? '&' : '?') . 'dl=1';
+
+    return $url;
+}
+
 $token = getLuluToken();
 if (!$token) {
     ob_end_clean();
@@ -33,7 +56,7 @@ if (!$token) {
 
 $method = $_SERVER['REQUEST_METHOD'];
 
-// ── POST: Start interior validation ───────────────────────────────────────
+// ── POST: Start interior validation ──────────────────────────────────────
 if ($method === 'POST') {
     $raw   = file_get_contents('php://input');
     $input = json_decode($raw, true);
@@ -45,7 +68,9 @@ if ($method === 'POST') {
         exit;
     }
 
-    $payload = ['source_url' => $input['source_url']];
+    $sourceUrl = normalizeDropboxUrl(trim($input['source_url']));
+
+    $payload = ['source_url' => $sourceUrl];
     if (!empty($input['pod_package_id'])) {
         $payload['pod_package_id'] = $input['pod_package_id'];
     }
@@ -68,11 +93,15 @@ if ($method === 'POST') {
     curl_close($ch);
 
     ob_end_clean();
-    if ($curlErr) { http_response_code(500); echo json_encode(['error' => $curlErr]); exit; }
+    if ($curlErr) {
+        http_response_code(500);
+        echo json_encode(['error' => 'cURL error: ' . $curlErr]);
+        exit;
+    }
     http_response_code($httpCode);
     echo $response;
 
-// ── GET: Poll validation status ───────────────────────────────────────────
+// ── GET: Poll validation status ──────────────────────────────────────────
 } elseif ($method === 'GET') {
     $id = $_GET['id'] ?? '';
     if (!$id) {
@@ -97,7 +126,11 @@ if ($method === 'POST') {
     curl_close($ch);
 
     ob_end_clean();
-    if ($curlErr) { http_response_code(500); echo json_encode(['error' => $curlErr]); exit; }
+    if ($curlErr) {
+        http_response_code(500);
+        echo json_encode(['error' => 'cURL error: ' . $curlErr]);
+        exit;
+    }
     http_response_code($httpCode);
     echo $response;
 

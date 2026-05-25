@@ -37,6 +37,32 @@ if (empty($input['line_items']) || empty($input['shipping_address'])) {
     exit;
 }
 
+// Build clean payload for /shipping-options/
+// - line_items need: pod_package_id, quantity, page_count (all required by Lulu)
+// - shipping_address needs 'country' key (not 'country_code')
+$shippingAddr = $input['shipping_address'];
+// Normalise: accept either 'country_code' or 'country'
+if (!isset($shippingAddr['country']) && isset($shippingAddr['country_code'])) {
+    $shippingAddr['country'] = $shippingAddr['country_code'];
+}
+unset($shippingAddr['country_code']); // Lulu only accepts 'country' here
+
+$cleanPayload = [
+    'currency'         => $input['currency'] ?? 'USD',
+    'line_items'       => array_map(function($item) {
+        $li = [
+            'pod_package_id' => $item['pod_package_id'],
+            'quantity'       => (int)($item['quantity'] ?? 1),
+        ];
+        // page_count is required by Lulu /shipping-options/ endpoint
+        if (!empty($item['page_count'])) {
+            $li['page_count'] = (int)$item['page_count'];
+        }
+        return $li;
+    }, $input['line_items']),
+    'shipping_address' => $shippingAddr,
+];
+
 $ch = curl_init(LULU_BASE_URL . '/shipping-options/');
 curl_setopt_array($ch, [
     CURLOPT_POST           => true,
@@ -47,7 +73,7 @@ curl_setopt_array($ch, [
         'Content-Type: application/json',
         'Cache-Control: no-cache',
     ],
-    CURLOPT_POSTFIELDS => json_encode($input),
+    CURLOPT_POSTFIELDS => json_encode($cleanPayload),
 ]);
 $response = curl_exec($ch);
 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);

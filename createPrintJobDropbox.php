@@ -53,9 +53,9 @@
 
         <div class="fg-3">
           <div class="fw">
-            <label class="fl" for="contact_email">Contact Email</label>
+            <label class="fl" for="contact_email">Contact Email <em class="req">*</em></label>
             <input type="email" id="contact_email" name="contact_email"
-                   class="fi" placeholder="you@example.com" aria-invalid="false">
+                   class="fi" placeholder="you@example.com" required aria-invalid="false">
             <span class="fe"></span>
           </div>
           <div class="fw">
@@ -114,7 +114,22 @@
           </div>
         </div>
 
-        <p class="spec-label" style="margin-top:4px;color:#6366f1">Shipping method will be auto-loaded after you submit — choose from real-time options with prices.</p>
+        <div class="fg-3" style="margin-top:4px">
+          <div class="fw">
+            <label class="fl" for="shipping_level">Shipping Method <em class="req">*</em></label>
+            <select id="shipping_level" name="shipping_level" class="fi fi-select" required aria-invalid="false">
+              <option value="">Select Shipping Method</option>
+              <option value="MAIL">Mail</option>
+              <option value="PRIORITY_MAIL">Priority Mail</option>
+              <option value="GROUND_HD">Ground Home Delivery</option>
+              <option value="GROUND_BUS">Ground Business</option>
+              <option value="GROUND">Ground</option>
+              <option value="EXPEDITED">Expedited</option>
+              <option value="EXPRESS">Express</option>
+            </select>
+            <span class="fe"></span>
+          </div>
+        </div>
 
       </div>
     </div>
@@ -232,7 +247,7 @@
             <option value="">Select Any</option>
             <option value="PB">Perfect Bound</option>
             <option value="CO">Coil</option>
-            <option value="SD">Saddle Stitch</option>
+            <option value="SS">Saddle Stitch</option>
             <option value="CS">Case Wrap</option>
             <option value="LW">Linen Wrap</option>
             <option value="WO">Wire-O</option>

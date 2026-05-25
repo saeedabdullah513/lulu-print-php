@@ -118,7 +118,7 @@ function validateAll() {
   return valid;
 }
 
-// ── pod_package_id (dotted format) ───────────────────────────────────────
+// ── pod_package_id (NO dots - Lulu format) ───────────────────────────────────────
 function buildPodPackageId(item) {
   const g = n => item.querySelector(`[name="${n}"]`)?.value || '';
   const trim   = g('trim_size'),  color  = g('color_type'), print = g('print_type'),

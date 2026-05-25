@@ -1,5 +1,4 @@
 <?php
-// Suppress HTML error output so XAMPP warnings never corrupt the JSON response
 ini_set('display_errors', '0');
 error_reporting(E_ALL);
 ob_start();
@@ -7,7 +6,6 @@ ob_start();
 header('Content-Type: application/json');
 require_once __DIR__ . '/config.php';
 
-// ── Get OAuth2 Bearer Token ────────────────────────────────────────────────
 function getLuluToken(): string {
     $ch = curl_init(LULU_AUTH_URL);
     curl_setopt_array($ch, [
@@ -26,15 +24,13 @@ function getLuluToken(): string {
     curl_close($ch);
 
     if ($curlErr) throw new RuntimeException('Token cURL error: ' . $curlErr);
-
     $data = json_decode($response, true);
     if (empty($data['access_token'])) {
-        throw new RuntimeException('No access_token in response: ' . $response);
+        throw new RuntimeException('No access_token: ' . $response);
     }
     return $data['access_token'];
 }
 
-// ── Read & validate incoming JSON ─────────────────────────────────────────
 $raw   = file_get_contents('php://input');
 $input = json_decode($raw, true);
 
@@ -45,8 +41,9 @@ if (!$input) {
     exit;
 }
 
-// ── Strip fields not accepted by the print-jobs endpoint ─────────────────
-// page_count is only used for cost calculation, not for job creation
+// ── Clean payload for /print-jobs/ ────────────────────────────────────────
+
+// 1. Remove page_count from line_items (only for cost calc, not job creation)
 if (isset($input['line_items']) && is_array($input['line_items'])) {
     foreach ($input['line_items'] as &$item) {
         unset($item['page_count']);
@@ -54,7 +51,13 @@ if (isset($input['line_items']) && is_array($input['line_items'])) {
     unset($item);
 }
 
-// ── Get token ─────────────────────────────────────────────────────────────
+// 2. Lulu /print-jobs/ requires 'shipping_level' (NOT 'shipping_option')
+//    JS may send either — normalize to shipping_level
+if (isset($input['shipping_option']) && !isset($input['shipping_level'])) {
+    $input['shipping_level'] = $input['shipping_option'];
+}
+unset($input['shipping_option']); // remove so only shipping_level reaches Lulu
+
 try {
     $token = getLuluToken();
 } catch (Exception $e) {
@@ -64,7 +67,6 @@ try {
     exit;
 }
 
-// ── Send Print-Job to Lulu ────────────────────────────────────────────────
 $ch = curl_init(LULU_BASE_URL . '/print-jobs/');
 curl_setopt_array($ch, [
     CURLOPT_POST           => true,
@@ -83,7 +85,7 @@ $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 $curlErr  = curl_error($ch);
 curl_close($ch);
 
-ob_end_clean(); // discard any stray PHP output before sending the real response
+ob_end_clean();
 
 if ($curlErr) {
     http_response_code(500);
